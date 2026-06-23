@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "CineMate AI",
+  "version": "1.0",
+  "description": "AI Movie Companion for Netflix & YouTube",
+
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting"
+  ],
+
+  "host_permissions": [
+    "https://www.youtube.com/*",
+    "https://www.netflix.com/*",
+    "http://localhost:3000/*"
+  ],
+
+  "action": {
+    "default_popup": "floating-button.html",
+    "default_title": "CineMate"
+  },
+
+  "background": {
+    "service_worker": "background.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.youtube.com/*",
+        "https://www.netflix.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

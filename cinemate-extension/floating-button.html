@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>Floating Button</title>
+<style>
+body {
+  margin: 0;
+  background: transparent;
+  font-family: Inter, sans-serif;
+}
+
+.floating-btn {
+  position: fixed;
+  bottom: 16px;
+  right: 32px;
+  width: 68px;
+  height: 68px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #7C3AED 60%, #18181B 100%);
+  box-shadow: 0 4px 24px rgba(124,58,237,0.5), 0 2px 8px #18181B;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 32px;
+  border: 2px solid #18181B;
+  transition: box-shadow 0.2s, background 0.2s;
+}
+
+.floating-btn:hover {
+  box-shadow: 0 8px 32px rgba(124,58,237,0.7), 0 4px 16px #18181B;
+  background: linear-gradient(135deg, #6D28D9 60%, #18181B 100%);
+}
+ </style>
+</head>
+
+<body>
+  <button id="openPanelBtn" class="floating-btn" title="Ask CineMate about this scene">
+    <span style="font-size: 32px; color: #fff;">🎬</span>
+  </button>
+  <script src="floating-button.js"></script>
+</body>
+</html>
