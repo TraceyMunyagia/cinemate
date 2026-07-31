@@ -9,11 +9,23 @@ const summaryPanel = document.getElementById("summaryPanel");
 const summaryText = document.getElementById("summaryText");
 const themeChips = document.getElementById("themeChips");
 const eventsList = document.getElementById("eventsList");
+const saveNotesBtn = document.getElementById("saveNotesBtn");
+const newChatBtn = document.getElementById("newChatBtn");
+const personaButtons = document.querySelectorAll(".persona-pill");
+
+const HISTORY_KEY = "cinemateHistory";
+const PERSONALITY_KEY = "cinematePersonality";
+const DEFAULT_PERSONALITY = "casualFriend";
 
 let mediaRecorder = null;
 let audioChunks = [];
 let micStream = null;
 let isRecording = false;
+let lastEpisodeMemory = null;
+let conversationHistory = [];
+let currentPersonality = DEFAULT_PERSONALITY;
+
+restoreState();
 
 talkBtn.addEventListener("click", async () => {
   if (isRecording) {
@@ -33,6 +45,37 @@ document.querySelectorAll("[data-message]").forEach((button) => {
 summaryBtn?.addEventListener("click", generateSummary);
 chatTab?.addEventListener("click", () => setView("chat"));
 summaryTab?.addEventListener("click", () => setView("summary"));
+saveNotesBtn?.addEventListener("click", saveNotes);
+newChatBtn?.addEventListener("click", startNewChat);
+
+personaButtons.forEach((button) => {
+  button.addEventListener("click", () => setPersonality(button.dataset.personality));
+});
+
+function setPersonality(personality) {
+  currentPersonality = personality;
+
+  personaButtons.forEach((button) => {
+    button.classList.toggle("active", button.dataset.personality === personality);
+  });
+
+  chrome.storage.local.set({ [PERSONALITY_KEY]: personality });
+}
+
+function restoreState() {
+  chrome.storage.local.get([HISTORY_KEY, PERSONALITY_KEY], (result) => {
+    setPersonality(result[PERSONALITY_KEY] || DEFAULT_PERSONALITY);
+
+    conversationHistory = Array.isArray(result[HISTORY_KEY]) ? result[HISTORY_KEY] : [];
+
+    if (conversationHistory.length > 0) {
+      conversationDiv.innerHTML = "";
+      conversationHistory.forEach((turn) => {
+        addMessage(turn.role === "user" ? "You" : "CineMate", turn.content, { persist: false });
+      });
+    }
+  });
+}
 
 async function startRecording() {
   try {
@@ -80,6 +123,7 @@ function stopRecording() {
 
 async function handleRecordingStop() {
   stopMicStream();
+  setBusy(true);
 
   try {
     const audioBlob = new Blob(audioChunks, {
@@ -99,25 +143,63 @@ async function handleRecordingStop() {
     console.error(err);
     statusDiv.innerText = "Error talking to AI.";
   } finally {
+    setBusy(false);
     if (voiceHint) voiceHint.innerText = "Tap to speak";
   }
 }
 
 async function sendTextMessage(message) {
+  setBusy(true);
+
   try {
     setView("chat");
     addMessage("You", message);
     statusDiv.innerText = "Thinking...";
+    showThinking();
 
     const reply = await askCineMate(message);
 
+    hideThinking();
     addMessage("CineMate", reply);
     await speak(reply);
     statusDiv.innerText = "Ready";
   } catch (err) {
     console.error(err);
+    hideThinking();
     statusDiv.innerText = "Error talking to AI.";
+  } finally {
+    setBusy(false);
   }
+}
+
+function setBusy(isBusy) {
+  const quickActionButtons = document.querySelectorAll("[data-message]");
+
+  [summaryBtn, saveNotesBtn, newChatBtn, ...personaButtons, ...quickActionButtons].forEach(
+    (button) => {
+      if (button) button.disabled = isBusy;
+    }
+  );
+
+  if (!isRecording) {
+    talkBtn.disabled = isBusy;
+  }
+}
+
+function showThinking() {
+  hideThinking();
+
+  const div = document.createElement("div");
+  div.id = "thinkingBubble";
+  div.className = "thinking";
+  div.innerHTML =
+    '<span class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span> CineMate is thinking...';
+  conversationDiv.appendChild(div);
+  conversationDiv.scrollTop = conversationDiv.scrollHeight;
+}
+
+function hideThinking() {
+  document.getElementById("thinkingBubble")?.remove();
 }
 
 async function transcribeAudio(audioBlob) {
@@ -149,6 +231,8 @@ async function askCineMate(message) {
     body: JSON.stringify({
       subtitles,
       message,
+      personality: currentPersonality,
+      history: conversationHistory.slice(0, -1),
     }),
   });
 
@@ -186,12 +270,17 @@ function stopMicStream() {
   micStream = null;
 }
 
-function addMessage(sender, text) {
+function addMessage(sender, text, options = {}) {
   const div = document.createElement("div");
   div.className = sender === "You" ? "user" : "ai";
   div.innerHTML = escapeHtml(text);
   conversationDiv.appendChild(div);
   conversationDiv.scrollTop = conversationDiv.scrollHeight;
+
+  if (options.persist !== false) {
+    conversationHistory.push({ role: sender === "You" ? "user" : "assistant", content: text });
+    chrome.storage.local.set({ [HISTORY_KEY]: conversationHistory });
+  }
 }
 
 async function speak(text) {
@@ -242,6 +331,10 @@ function escapeHtml(text) {
 }
 
 async function generateSummary() {
+  setBusy(true);
+  const originalLabel = summaryBtn.innerHTML;
+  summaryBtn.innerHTML = '<span class="spinner"></span>Generating...';
+
   try {
     setView("summary");
     statusDiv.innerText = "Generating summary...";
@@ -266,12 +359,16 @@ async function generateSummary() {
   } catch (err) {
     console.error(err);
     statusDiv.innerText = "Summary unavailable.";
+  } finally {
+    setBusy(false);
+    summaryBtn.innerHTML = originalLabel;
   }
 }
 
 function renderSummary(memory) {
   if (!memory) return;
 
+  lastEpisodeMemory = memory;
   summaryText.innerText = memory.summary || "No summary returned.";
   themeChips.innerHTML = "";
   eventsList.innerHTML = "";
@@ -299,6 +396,46 @@ function renderSummary(memory) {
       eventsList.appendChild(div);
     });
   }
+}
+
+function saveNotes() {
+  if (!lastEpisodeMemory) {
+    statusDiv.innerText = "Generate a summary first.";
+    return;
+  }
+
+  const lines = [
+    "CineMate Episode Notes",
+    "",
+    lastEpisodeMemory.summary || "",
+    "",
+    "Key Themes:",
+    ...(lastEpisodeMemory.keyThemes || []).map((theme) => `- ${theme}`),
+    "",
+    "Important Events:",
+    ...(lastEpisodeMemory.importantEvents || []).map(
+      (event) => `- [${event.time || "00:00:00"}] ${event.description || ""}`
+    ),
+  ];
+
+  const blob = new Blob([lines.join("\n")], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "cinemate-notes.txt";
+  link.click();
+  URL.revokeObjectURL(url);
+
+  statusDiv.innerText = "Notes saved.";
+}
+
+function startNewChat() {
+  conversationDiv.innerHTML =
+    '<div class="ai">Ask me about the scene, character choices, conflicts, or what just happened.</div>';
+  conversationHistory = [];
+  chrome.storage.local.set({ [HISTORY_KEY]: [] });
+  statusDiv.innerText = "Ready";
+  setView("chat");
 }
 
 function setView(view) {

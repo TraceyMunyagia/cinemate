@@ -54,6 +54,30 @@ body {
   min-height: 16px;
 }
 
+.persona-row {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px 0;
+}
+
+.persona-pill {
+  flex: 1;
+  padding: 6px 4px;
+  border-radius: 999px;
+  border: 1px solid #1F2937;
+  background: #111827;
+  color: #A1A1AA;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.persona-pill.active {
+  background: rgba(124, 58, 237, 0.25);
+  border-color: #7C3AED;
+  color: white;
+}
+
 .chat {
   flex: 1;
   padding: 16px;
@@ -79,6 +103,34 @@ body {
 .user {
   background: #7C3AED;
   margin-left: auto;
+}
+
+.thinking {
+  background: #111827;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking .dots {
+  display: flex;
+  gap: 4px;
+}
+
+.thinking .dot {
+  width: 6px;
+  height: 6px;
+  background: #A78BFA;
+  border-radius: 50%;
+  animation: blink 1.4s infinite;
+}
+
+.thinking .dot:nth-child(2) { animation-delay: 0.2s; }
+.thinking .dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes blink {
+  0%, 100% { opacity: 0.3; }
+  50% { opacity: 1; }
 }
 
 .summary-panel {
@@ -119,6 +171,30 @@ body {
   font-size: 12px;
 }
 
+.summary-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.summary-btn {
+  flex: 1;
+  padding: 10px;
+  border: 0;
+  border-radius: 12px;
+  text-align: center;
+  background: #7C3AED;
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.summary-btn.secondary {
+  background: #111827;
+  border: 1px solid #1F2937;
+}
+
 .actions {
   display: flex;
   gap: 8px;
@@ -156,12 +232,39 @@ body {
 
 .mic.recording {
   background: #DC2626;
-  box-shadow: 0 0 30px rgba(220, 38, 38, 0.7);
+  animation: micPulse 1.4s infinite;
+}
+
+@keyframes micPulse {
+  0% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0.6); }
+  70% { box-shadow: 0 0 0 20px rgba(220, 38, 38, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(220, 38, 38, 0); }
 }
 
 .hint {
   color: #A1A1AA;
   font-size: 12px;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.spinner {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  border-top-color: white;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .nav {
@@ -195,6 +298,12 @@ body {
     </div>
   </div>
 
+  <div class="persona-row">
+    <button class="persona-pill" data-personality="filmCritic">🎬 Critic</button>
+    <button class="persona-pill active" data-personality="casualFriend">😊 Friend</button>
+    <button class="persona-pill" data-personality="theoryAnalyst">🕵️ Theorist</button>
+  </div>
+
   <div id="conversation" class="chat">
     <div class="ai">Ask me about the scene, character choices, conflicts, or what just happened.</div>
   </div>
@@ -211,6 +320,11 @@ body {
     <div class="summary-card">
       <b>Important Events</b>
       <div id="eventsList">No events generated yet.</div>
+    </div>
+
+    <div class="summary-actions">
+      <button id="saveNotesBtn" class="summary-btn">Save Notes</button>
+      <button id="newChatBtn" class="summary-btn secondary">New Chat</button>
     </div>
   </div>
 
