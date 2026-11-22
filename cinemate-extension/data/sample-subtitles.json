@@ -1,0 +1,34 @@
+{
+  "description": "Caption frames as CineMate reads them off the page once per second, plus the entries the cleaner should produce. Used by tests/replay-captions.js.",
+  "frames": [
+    { "seconds": 10, "text": "So" },
+    { "seconds": 11, "text": "So where" },
+    { "seconds": 12, "text": "So where were you" },
+    { "seconds": 13, "text": "So where were you last night?" },
+    { "seconds": 14, "text": "" },
+    { "seconds": 15, "text": "So where were you last night? I" },
+    { "seconds": 16, "text": "So where were you last night? I told you, I was" },
+    { "seconds": 17, "text": "So where were you last night? I told you, I was at the studio." },
+    { "seconds": 19, "text": "I told you, I was at the studio. Until" },
+    { "seconds": 20, "text": "I told you, I was at the studio. Until two in the morning?" },
+    { "seconds": 21, "text": "Until two in the morning?" },
+    { "seconds": 22, "text": "Until two in the morning? Doing what?" },
+    { "seconds": 30, "text": "Mixing the album. You know that." },
+    { "seconds": 31, "text": "Mixing the album. You know that." },
+    { "seconds": 33, "text": "Then why does Kofi say the studio was locked?" },
+    { "seconds": 34, "text": "" },
+    { "seconds": 35, "text": "Then why does Kofi say the studio was locked?" },
+    { "seconds": 40, "text": "♪ ♪" },
+    { "seconds": 12, "text": "So where were you last night?" },
+    { "seconds": 13, "text": "So where were you last night? I" },
+    { "seconds": 42, "text": "Because Kofi wasn't there either." }
+  ],
+  "expected": [
+    "So where were you last night? I told you, I was at the studio.",
+    "Until two in the morning?",
+    "Doing what?",
+    "Mixing the album. You know that.",
+    "Then why does Kofi say the studio was locked?",
+    "Because Kofi wasn't there either."
+  ]
+}

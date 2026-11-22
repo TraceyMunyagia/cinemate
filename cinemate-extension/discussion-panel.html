@@ -53,6 +53,33 @@ body {
   color: #A1A1AA;
   min-height: 16px;
 }
+.header-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.video-title {
+  font-size: 12px;
+  color: #C4B5FD;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid #1F2937;
+  background: #111827;
+  color: #A1A1AA;
+  cursor: pointer;
+}
+
+.icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
 
 .persona-row {
   display: flex;
@@ -292,10 +319,13 @@ button:disabled {
 <div class="frame">
   <div class="header">
     <div class="thumb">🎬</div>
-    <div>
+       <div class="header-text">
       <div class="title">CineMate</div>
+      <div id="videoTitle" class="video-title">No video detected</div>
       <div id="status" class="status">Ready</div>
     </div>
+    <button id="clearCaptionsBtn" class="icon-btn" title="Clear captured captions for this video">🧹</button>
+  </div>
   </div>
 
   <div class="persona-row">
@@ -345,6 +375,6 @@ button:disabled {
   </div>
 </div>
 
-<script src="popup.js"></script>
-</body>
+<script src="utils/storage.js"></script>
+<script src="popup.js"></script></body>
 </html>

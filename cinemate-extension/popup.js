@@ -12,6 +12,10 @@ const eventsList = document.getElementById("eventsList");
 const saveNotesBtn = document.getElementById("saveNotesBtn");
 const newChatBtn = document.getElementById("newChatBtn");
 const personaButtons = document.querySelectorAll(".persona-pill");
+const videoTitleDiv = document.getElementById("videoTitle");
+const clearCaptionsBtn = document.getElementById("clearCaptionsBtn");
+
+const { storage } = globalThis.CineMate;
 
 const HISTORY_KEY = "cinemateHistory";
 const PERSONALITY_KEY = "cinematePersonality";
@@ -24,7 +28,11 @@ let isRecording = false;
 let lastEpisodeMemory = null;
 let conversationHistory = [];
 let currentPersonality = DEFAULT_PERSONALITY;
+let activeVideo = null;
 
+restoreState();
+refreshVideoInfo();
+storage.watch(handleStorageChange);
 restoreState();
 
 talkBtn.addEventListener("click", async () => {
@@ -47,6 +55,7 @@ chatTab?.addEventListener("click", () => setView("chat"));
 summaryTab?.addEventListener("click", () => setView("summary"));
 saveNotesBtn?.addEventListener("click", saveNotes);
 newChatBtn?.addEventListener("click", startNewChat);
+clearCaptionsBtn?.addEventListener("click", clearCaptions);
 
 personaButtons.forEach((button) => {
   button.addEventListener("click", () => setPersonality(button.dataset.personality));
@@ -245,12 +254,9 @@ async function askCineMate(message) {
   return data.reply;
 }
 
-function getStoredSubtitles() {
-  return new Promise((resolve) => {
-    chrome.storage.local.get(["subtitles"], (result) => {
-      resolve(result.subtitles || []);
-    });
-  });
+async function getStoredSubtitles() {
+  activeVideo = await storage.getActiveVideo();
+  return activeVideo ? storage.getSubtitles(activeVideo.videoId) : [];
 }
 
 function getSupportedMimeType() {
@@ -340,6 +346,11 @@ async function generateSummary() {
     statusDiv.innerText = "Generating summary...";
 
     const subtitles = await getStoredSubtitles();
+
+    if (subtitles.length === 0) {
+      statusDiv.innerText = "No captions yet – turn on CC and play the video.";
+      return;
+    }
     const response = await fetch("http://localhost:3000/summarize", {
       method: "POST",
       headers: {
@@ -447,4 +458,39 @@ function setView(view) {
   }
   chatTab?.classList.toggle("active", !isSummary);
   summaryTab?.classList.toggle("active", isSummary);
+}
+// ---------- Active video (Week 1) ----------
+
+async function refreshVideoInfo() {
+  activeVideo = await storage.getActiveVideo();
+
+  if (!activeVideo) {
+    videoTitleDiv.innerText = "No video detected – open YouTube or Netflix";
+    videoTitleDiv.title = "";
+    clearCaptionsBtn.disabled = true;
+    return;
+  }
+
+  const subtitles = await storage.getSubtitles(activeVideo.videoId);
+  const name = activeVideo.title || "Untitled video";
+  const lines = subtitles.length === 1 ? "1 line" : `${subtitles.length} lines`;
+
+  videoTitleDiv.innerText = `${name} · ${lines}`;
+  videoTitleDiv.title = name;
+  clearCaptionsBtn.disabled = subtitles.length === 0;
+}
+
+function handleStorageChange(changes) {
+  const activeChanged = Boolean(changes[storage.KEYS.ACTIVE]);
+  const captionsChanged =
+    activeVideo && Boolean(changes[storage.subtitleKey(activeVideo.videoId)]);
+
+  if (activeChanged || captionsChanged) refreshVideoInfo();
+}
+
+async function clearCaptions() {
+  if (!activeVideo) return;
+
+  await storage.clearSubtitles(activeVideo.videoId);
+  statusDiv.innerText = "Captions cleared for this video.";
 }
