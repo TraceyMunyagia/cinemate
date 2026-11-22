@@ -50,13 +50,18 @@ chrome.windows.onRemoved.addListener(async (windowId) => {
   }
 });
 
-// The 🎬 button on YouTube / Netflix.
-chrome.runtime.onMessage.addListener((message) => {
+// Messages from the content scripts.
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // The 🎬 button on YouTube / Netflix.
   if (message.action === "openDiscussionPanel") {
     openPanel();
   }
-});
 
+  // A content script asking which tab it's in, so the panel can reach it.
+  if (message.action === "whoAmI") {
+    sendResponse({ tabId: sender.tab?.id ?? null });
+  }
+});
 // The toolbar icon. Tell the tab to make its video active, then open the panel.
 chrome.action.onClicked.addListener(async (tab) => {
   try {

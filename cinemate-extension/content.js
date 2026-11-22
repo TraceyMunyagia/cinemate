@@ -21,6 +21,7 @@
   let syncing = null; // in-flight syncSession() promise
   let button = null;
   let intervalId = null;
+  let tabId = null; // this tab's id, so the panel can ask for the playback time
 
   console.log("🎬 CineMate content script running");
 
@@ -62,6 +63,18 @@
 
   // ---------- Sessions ----------
 
+  async function getTabId() {
+    if (tabId !== null) return tabId;
+
+    try {
+      const reply = await chrome.runtime.sendMessage({ action: "whoAmI" });
+      tabId = reply?.tabId ?? null;
+    } catch {
+      tabId = null;
+    }
+
+    return tabId;
+  }
   // Start a new session whenever the video in the URL changes.
   function syncSession() {
     if (!syncing) {
@@ -92,7 +105,7 @@
 
     // Resume if this video was captured before.
     const entries = await storage.getSubtitles(current.videoId);
-    session = current;
+    session = { ...current, tabId: await getTabId() };
     tracker = captions.createTracker(entries);
 
     await storage.setActiveVideo(session);
@@ -187,9 +200,21 @@
 
   // Toolbar icon clicked on this tab -> make this video the active one.
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.action !== "activateSession") return;
-    activateSession().then((ok) => sendResponse({ ok }));
-    return true; // keep the channel open for the async reply
+    // Toolbar icon clicked on this tab -> make this video the active one.
+    if (message.action === "activateSession") {
+      activateSession().then((ok) => sendResponse({ ok }));
+      return true; // keep the channel open for the async reply
+    }
+
+    // The panel asking where the viewer is (spoiler guard).
+    if (message.action === "getPlayback") {
+      const video = time.getVideoElement();
+      sendResponse({
+        videoId: session?.videoId || null,
+        seconds: video ? video.currentTime : null,
+        paused: video ? video.paused : true,
+      });
+    }
   });
 
   // Captions cleared from the panel -> forget them here too.

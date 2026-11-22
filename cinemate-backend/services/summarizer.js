@@ -1,81 +1,137 @@
+// services/summarizer.js
+// Builds an episode memory from subtitles.
+// Short episodes: one AI call. Long ones: summarise each section, then merge
+// the section memories (map → reduce), so the whole episode is covered.
+
+const config = require("../config");
 const chunkingService = require("./chunkingService");
-const geminiService = require("./geminiService");
-const { extractJson } = require("../utils/formatter");
-const { buildEpisodePrompt } = require("../prompts/episodePrompt");
+const defaultAi = require("./aiService");
+const { extractJson, entrySeconds } = require("../utils/formatter");
+const { buildEpisodePrompt, buildMergePrompt } = require("../prompts/episodePrompt");
 const { HttpError } = require("../utils/validators");
 
-const USE_MOCK_AI = process.env.USE_MOCK_AI === "true";
+const MAX_SECTIONS = 8;
+const MIN_SECTION_CHARS = 16000;
 
-function normalizeEpisodeMemory(memory, chunks) {
+const asArray = (value) => (Array.isArray(value) ? value : []);
+
+// Map of chunk index -> chunk summary, read from the AI's "subtitleChunks".
+function chunkSummaryMap(memory) {
+  const map = new Map();
+  for (const item of asArray(memory?.subtitleChunks)) {
+    if (Number.isInteger(item?.index)) map.set(item.index, String(item.summary || ""));
+  }
+  return map;
+}
+
+function normalizeEpisodeMemory(memory, chunks, summaries = chunkSummaryMap(memory)) {
   return {
-    summary: String(memory.summary || ""),
-    characters: Array.isArray(memory.characters) ? memory.characters : [],
-    importantEvents: Array.isArray(memory.importantEvents)
-      ? memory.importantEvents
-      : [],
-    keyThemes: Array.isArray(memory.keyThemes) ? memory.keyThemes : [],
-    emotionalMoments: Array.isArray(memory.emotionalMoments)
-      ? memory.emotionalMoments
-      : [],
-    majorConflicts: Array.isArray(memory.majorConflicts)
-      ? memory.majorConflicts
-      : [],
-    importantCharacterActions: Array.isArray(memory.importantCharacterActions)
-      ? memory.importantCharacterActions
-      : [],
+    summary: String(memory?.summary || ""),
+    characters: asArray(memory?.characters),
+    importantEvents: asArray(memory?.importantEvents),
+    keyThemes: asArray(memory?.keyThemes),
+    emotionalMoments: asArray(memory?.emotionalMoments),
+    majorConflicts: asArray(memory?.majorConflicts),
+    importantCharacterActions: asArray(memory?.importantCharacterActions),
     subtitleChunks: chunks.map(({ text, ...chunk }) => ({
       ...chunk,
-      summary: memory.subtitleChunks?.[chunk.index]?.summary || "",
+      summary: summaries.get(chunk.index) || "",
     })),
   };
 }
 
-function buildMockEpisodeMemory(subtitles, chunks) {
-  const sampleLines = subtitles.slice(-5).map((s) => s.text).filter(Boolean);
-  const summary =
-    sampleLines.length > 0
-      ? `Mock summary generated from ${subtitles.length} captured subtitle entries. Recent dialogue: ${sampleLines.join(" ")}`
-      : "Mock summary generated without subtitle text.";
+// What part of the episode this memory is based on (used for caching and
+// for keeping spoilers out of chat).
+function describeCoverage(subtitles, chunks, sectionCount) {
+  const last = subtitles[subtitles.length - 1];
 
   return {
-    summary,
+    lineCount: subtitles.length,
+    startTime: chunks[0]?.startTime || "00:00:00",
+    endTime: chunks[chunks.length - 1]?.endTime || "00:00:00",
+    endSeconds: entrySeconds(last),
+    sections: sectionCount,
+  };
+}
+
+function buildMockEpisodeMemory(subtitles, chunks) {
+  const recent = subtitles.slice(-5).map((s) => s.text).filter(Boolean);
+
+  return {
+    summary: `Mock summary of ${subtitles.length} subtitle lines (${chunks[0].startTime}–${chunks[chunks.length - 1].endTime}). Recent dialogue: ${recent.join(" ")}`,
     characters: [],
     importantEvents: [
-      {
-        time: subtitles[0]?.time || "00:00:00",
-        description: "Mock event based on captured subtitle flow.",
-      },
+      { time: subtitles[0]?.time || "00:00:00", description: "Mock event based on captured subtitle flow." },
     ],
     keyThemes: ["Mock theme"],
     emotionalMoments: [],
     majorConflicts: [],
     importantCharacterActions: [],
-    subtitleChunks: chunks.map(({ text, ...chunk }) => ({
-      ...chunk,
-      summary: "Mock chunk summary.",
-    })),
+    subtitleChunks: chunks.map(({ text, ...chunk }) => ({ ...chunk, summary: "Mock chunk summary." })),
   };
 }
 
-async function buildEpisodeMemory(subtitles) {
-  const subtitleChunks = chunkingService.buildSubtitleChunks(subtitles);
+function createSummarizer({ ai = defaultAi, useMock = config.useMockAi } = {}) {
+  async function summarizeSections(sections) {
+    const parts = [];
 
-  if (subtitleChunks.length === 0) {
-    throw new HttpError(400, "No usable subtitle text found.");
+    // One at a time, so the rate limiter can space the calls out.
+    for (const section of sections) {
+      const prompt = buildEpisodePrompt(section.chunks, {
+        part: section.index + 1,
+        totalParts: sections.length,
+      });
+      const memory = extractJson(await ai.generateStructured(prompt));
+      parts.push({ section, memory });
+    }
+
+    return parts;
   }
 
-  if (USE_MOCK_AI) {
-    return {
-      mock: true,
-      episodeMemory: buildMockEpisodeMemory(subtitles, subtitleChunks),
-    };
+  async function buildEpisodeMemory(subtitles) {
+    const chunks = chunkingService.buildSubtitleChunks(subtitles);
+
+    if (chunks.length === 0) {
+      throw new HttpError(400, "No usable subtitle text found.");
+    }
+
+    const sections = chunkingService.groupIntoSections(chunks, {
+      maxSections: MAX_SECTIONS,
+      minSectionChars: MIN_SECTION_CHARS,
+    });
+    const coverage = describeCoverage(subtitles, chunks, sections.length);
+
+    if (useMock) {
+      return { mock: true, episodeMemory: { ...buildMockEpisodeMemory(subtitles, chunks), coverage } };
+    }
+
+    // Short episode: a single call, like before.
+    if (sections.length === 1) {
+      const raw = await ai.generateStructured(buildEpisodePrompt(chunks));
+      const memory = normalizeEpisodeMemory(extractJson(raw), chunks);
+      return { mock: false, episodeMemory: { ...memory, coverage } };
+    }
+
+    // Long episode: map each section, then reduce.
+    const parts = await summarizeSections(sections);
+
+    const chunkSummaries = new Map();
+    parts.forEach(({ memory }) => {
+      chunkSummaryMap(memory).forEach((summary, index) => chunkSummaries.set(index, summary));
+    });
+
+    const mergeInput = parts.map(({ section, memory }) => {
+      const { subtitleChunks, ...rest } = memory || {};
+      return { part: section.index + 1, startTime: section.startTime, endTime: section.endTime, ...rest };
+    });
+
+    const merged = extractJson(await ai.generateStructured(buildMergePrompt(mergeInput)));
+    const memory = normalizeEpisodeMemory(merged, chunks, chunkSummaries);
+
+    return { mock: false, episodeMemory: { ...memory, coverage } };
   }
 
-  const prompt = buildEpisodePrompt(subtitleChunks);
-  const rawMemory = await geminiService.generateStructured(prompt);
-  const episodeMemory = normalizeEpisodeMemory(extractJson(rawMemory), subtitleChunks);
-
-  return { mock: false, episodeMemory };
+  return { buildEpisodeMemory };
 }
 
-module.exports = { buildEpisodeMemory };
+module.exports = { ...createSummarizer(), createSummarizer };

@@ -1,60 +1,75 @@
+// services/memoryService.js
+// Saves episode memories as JSON files in data/episode-memory/.
+// File names are "<slug>-<hash>.json": YouTube ids are case-sensitive
+// (abc ≠ ABC) but macOS file names aren't, so the hash keeps them apart.
+
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 const { slugify } = require("../utils/formatter");
 const logger = require("../utils/logger");
 
-const DATA_DIR = path.join(__dirname, "..", "data", "episode-memory");
+const DATA_DIR =
+  process.env.EPISODE_MEMORY_DIR || path.join(__dirname, "..", "data", "episode-memory");
 
-function resolveFilePath(episodeId) {
-  return path.join(DATA_DIR, `${slugify(episodeId)}.json`);
+function fileNameFor(episodeId) {
+  const id = String(episodeId);
+  const hash = crypto.createHash("sha1").update(id).digest("hex").slice(0, 8);
+  return `${slugify(id)}-${hash}.json`;
 }
 
-async function saveEpisodeMemory(episodeId, episodeMemory) {
-  await fs.promises.mkdir(DATA_DIR, { recursive: true });
-
-  const id = slugify(episodeId);
-  const record = {
-    episodeId: id,
-    savedAt: new Date().toISOString(),
-    episodeMemory,
-  };
-
-  await fs.promises.writeFile(resolveFilePath(id), JSON.stringify(record, null, 2));
-  logger.info(`Saved episode memory for "${id}"`);
-
-  return record;
-}
-
-async function getEpisodeMemory(episodeId) {
+async function readJson(filePath) {
   try {
-    const raw = await fs.promises.readFile(resolveFilePath(episodeId), "utf-8");
-    return JSON.parse(raw);
+    return JSON.parse(await fs.promises.readFile(filePath, "utf-8"));
   } catch (error) {
     if (error.code === "ENOENT") return null;
     throw error;
   }
 }
 
-async function listEpisodeMemories() {
+// `fingerprint` identifies the exact subtitles the memory was built from.
+async function saveEpisodeMemory(episodeId, episodeMemory, { fingerprint = null } = {}) {
   await fs.promises.mkdir(DATA_DIR, { recursive: true });
-  const files = await fs.promises.readdir(DATA_DIR);
 
-  const records = await Promise.all(
-    files
-      .filter((file) => file.endsWith(".json"))
-      .map(async (file) => {
-        const raw = await fs.promises.readFile(path.join(DATA_DIR, file), "utf-8");
-        const record = JSON.parse(raw);
+  const record = {
+    episodeId: String(episodeId),
+    savedAt: new Date().toISOString(),
+    fingerprint,
+    episodeMemory,
+  };
 
-        return {
-          episodeId: record.episodeId,
-          savedAt: record.savedAt,
-          summary: record.episodeMemory?.summary || "",
-        };
-      })
+  await fs.promises.writeFile(
+    path.join(DATA_DIR, fileNameFor(episodeId)),
+    JSON.stringify(record, null, 2)
   );
+  logger.info(`Saved episode memory for "${record.episodeId}"`);
 
-  return records.sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+  return record;
 }
 
-module.exports = { saveEpisodeMemory, getEpisodeMemory, listEpisodeMemories };
+async function getEpisodeMemory(episodeId) {
+  const record = await readJson(path.join(DATA_DIR, fileNameFor(episodeId)));
+  if (record) return record;
+
+  // Files saved before Week 2 were named "<slug>.json".
+  return readJson(path.join(DATA_DIR, `${slugify(episodeId)}.json`));
+}
+
+async function listEpisodeMemories() {
+  await fs.promises.mkdir(DATA_DIR, { recursive: true });
+  const files = (await fs.promises.readdir(DATA_DIR)).filter((file) => file.endsWith(".json"));
+
+  const records = await Promise.all(files.map((file) => readJson(path.join(DATA_DIR, file))));
+
+  return records
+    .filter(Boolean)
+    .map((record) => ({
+      episodeId: record.episodeId,
+      savedAt: record.savedAt,
+      summary: record.episodeMemory?.summary || "",
+      coveredUntil: record.episodeMemory?.coverage?.endTime || null,
+    }))
+    .sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
+}
+
+module.exports = { saveEpisodeMemory, getEpisodeMemory, listEpisodeMemories, fileNameFor };

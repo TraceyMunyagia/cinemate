@@ -1,18 +1,58 @@
 const summarizer = require("../services/summarizer");
 const memoryService = require("../services/memoryService");
-const { requireSubtitles } = require("../utils/validators");
+const contextService = require("../services/contextService");
+const {
+  HttpError,
+  requireSubtitles,
+  optionalString,
+  optionalNumber,
+  optionalBoolean,
+} = require("../utils/validators");
 
+// POST /summarize  { subtitles, episodeId?, currentSeconds?, force? }
 async function summarize(req, res, next) {
   try {
-    const { subtitles, episodeId } = req.body;
+    const { subtitles, episodeId, currentSeconds, force } = req.body;
     requireSubtitles(subtitles);
+    optionalString(episodeId, "episodeId", 200);
+    optionalNumber(currentSeconds, "currentSeconds");
+    optionalBoolean(force, "force");
 
-    const { mock, episodeMemory } = await summarizer.buildEpisodeMemory(subtitles);
+    // Spoiler guard: never summarise past where the viewer is.
+    const visible = contextService.upTo(subtitles, currentSeconds);
+    if (visible.length === 0) {
+      throw new HttpError(400, "No captions before the current playback point yet.");
+    }
+
+    const fingerprint = contextService.fingerprint(visible);
+
+    // Same captions as last time → reuse the saved summary (no AI call).
+    if (episodeId && !force) {
+      const saved = await memoryService.getEpisodeMemory(episodeId);
+
+      if (saved?.fingerprint === fingerprint) {
+        return res.json({
+          success: true,
+          cached: true,
+          mock: false,
+          episodeId: saved.episodeId,
+          summary: saved.episodeMemory.summary,
+          episodeMemory: saved.episodeMemory,
+        });
+      }
+    }
+
+    const { mock, episodeMemory } = await summarizer.buildEpisodeMemory(visible);
     const id = episodeId || `episode-${Date.now()}`;
-    await memoryService.saveEpisodeMemory(id, episodeMemory);
+
+    // Mock summaries are saved but never served from the cache.
+    await memoryService.saveEpisodeMemory(id, episodeMemory, {
+      fingerprint: mock ? null : fingerprint,
+    });
 
     res.json({
       success: true,
+      cached: false,
       mock,
       episodeId: id,
       summary: episodeMemory.summary,

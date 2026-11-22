@@ -55,6 +55,28 @@ function requireAudioBuffer(body) {
   }
 }
 
+// Optional fields from the extension. null is treated the same as "not sent".
+function optionalNumber(value, name) {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new HttpError(400, `Invalid ${name}. Expected a number of seconds.`);
+  }
+}
+
+function optionalString(value, name, maxLength = 300) {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "string" || value.length > maxLength) {
+    throw new HttpError(400, `Invalid ${name}. Expected text up to ${maxLength} characters.`);
+  }
+}
+
+function optionalBoolean(value, name) {
+  if (value === undefined || value === null) return;
+  if (typeof value !== "boolean") {
+    throw new HttpError(400, `Invalid ${name}. Expected true or false.`);
+  }
+}
+
 module.exports = {
   HttpError,
   requireSubtitles,
@@ -63,4 +85,7 @@ module.exports = {
   optionalHistory,
   requireText,
   requireAudioBuffer,
+  optionalNumber,
+  optionalString,
+  optionalBoolean,
 };

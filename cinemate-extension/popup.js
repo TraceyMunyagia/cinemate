@@ -15,7 +15,8 @@ const personaButtons = document.querySelectorAll(".persona-pill");
 const videoTitleDiv = document.getElementById("videoTitle");
 const clearCaptionsBtn = document.getElementById("clearCaptionsBtn");
 
-const { storage } = globalThis.CineMate;
+const { storage, context } = globalThis.CineMate;
+const API_BASE = "http://localhost:3000";
 
 const HISTORY_KEY = "cinemateHistory";
 const PERSONALITY_KEY = "cinematePersonality";
@@ -29,6 +30,8 @@ let lastEpisodeMemory = null;
 let conversationHistory = [];
 let currentPersonality = DEFAULT_PERSONALITY;
 let activeVideo = null;
+let cooldownUntil = 0; // set after a rate limit; AI buttons stay off until then
+let cooldownTimer = null;
 
 restoreState();
 refreshVideoInfo();
@@ -172,26 +175,28 @@ async function sendTextMessage(message) {
     addMessage("CineMate", reply);
     await speak(reply);
     statusDiv.innerText = "Ready";
-  } catch (err) {
+     } catch (err) {
     console.error(err);
     hideThinking();
-    statusDiv.innerText = "Error talking to AI.";
+    showError(err, "Error talking to AI.");
   } finally {
     setBusy(false);
   }
 }
 
 function setBusy(isBusy) {
-  const quickActionButtons = document.querySelectorAll("[data-message]");
+  const quickActionButtons = Array.from(document.querySelectorAll("[data-message]"));
+  const coolingDown = Date.now() < cooldownUntil;
+  const aiButtons = [summaryBtn, ...quickActionButtons];
 
   [summaryBtn, saveNotesBtn, newChatBtn, ...personaButtons, ...quickActionButtons].forEach(
     (button) => {
-      if (button) button.disabled = isBusy;
+      if (button) button.disabled = isBusy || (coolingDown && aiButtons.includes(button));
     }
   );
 
   if (!isRecording) {
-    talkBtn.disabled = isBusy;
+    talkBtn.disabled = isBusy || coolingDown;
   }
 }
 
@@ -230,26 +235,17 @@ async function transcribeAudio(audioBlob) {
 }
 
 async function askCineMate(message) {
-  const subtitles = await getStoredSubtitles();
+  const { subtitles, currentSeconds } = await getViewingContext();
 
-  const response = await fetch("http://localhost:3000/chat", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      subtitles,
-      message,
-      personality: currentPersonality,
-      history: conversationHistory.slice(0, -1),
-    }),
+  const data = await postJson("/chat", {
+    subtitles: context.forChat(subtitles, currentSeconds),
+    message,
+    personality: currentPersonality,
+    history: conversationHistory.slice(0, -1),
+    episodeId: activeVideo?.videoId,
+    videoTitle: activeVideo?.title,
+    currentSeconds,
   });
-
-  const data = await response.json();
-
-  if (!response.ok || !data.success) {
-    throw new Error(data.error || "Chat failed.");
-  }
 
   return data.reply;
 }
@@ -493,4 +489,80 @@ async function clearCaptions() {
 
   await storage.clearSubtitles(activeVideo.videoId);
   statusDiv.innerText = "Captions cleared for this video.";
+}
+// ---------- Backend calls + viewing context (Week 2) ----------
+
+class ApiError extends Error {
+  constructor(message, status, data = {}) {
+    super(message);
+    this.status = status;
+    this.retryAfterSeconds = data.retryAfterSeconds;
+    this.code = data.code;
+  }
+}
+
+async function postJson(path, body) {
+  let response;
+
+  try {
+    response = await fetch(`${API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch {
+    throw new ApiError("Can't reach the CineMate server – is it running on localhost:3000?", 0);
+  }
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok || !data.success) {
+    throw new ApiError(data.error || `Request failed (${response.status}).`, response.status, data);
+  }
+
+  return data;
+}
+
+// Captions for the active video, plus where the viewer is right now.
+// If the video's tab can't be reached, falls back to the last captured line.
+async function getViewingContext() {
+  const subtitles = await getStoredSubtitles();
+  const playback = activeVideo ? await context.getPlayback(activeVideo) : null;
+  const lastLine = subtitles[subtitles.length - 1];
+
+  const currentSeconds = playback ? playback.seconds : lastLine ? lastLine.seconds : null;
+
+  return { subtitles, currentSeconds };
+}
+
+function showError(err, fallbackMessage) {
+  if (err instanceof ApiError && err.retryAfterSeconds && err.code !== "AI_DAILY_QUOTA") {
+    startCooldown(err.retryAfterSeconds, err.message.replace(/ Try again.*$/, ""));
+    return;
+  }
+
+  statusDiv.innerText = err instanceof ApiError ? err.message : fallbackMessage;
+}
+
+// Rate limited: count down and keep the AI buttons off until it's over.
+function startCooldown(seconds, reason) {
+  cooldownUntil = Date.now() + seconds * 1000;
+  clearInterval(cooldownTimer);
+
+  const tick = () => {
+    const left = Math.ceil((cooldownUntil - Date.now()) / 1000);
+
+    if (left <= 0) {
+      clearInterval(cooldownTimer);
+      cooldownUntil = 0;
+      statusDiv.innerText = "Ready";
+      setBusy(false);
+      return;
+    }
+
+    statusDiv.innerText = `${reason} Try again in ${left}s.`;
+  };
+
+  tick();
+  cooldownTimer = setInterval(tick, 1000);
 }

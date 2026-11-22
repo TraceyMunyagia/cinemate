@@ -1,7 +1,7 @@
-require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 
+const config = require("./config");
 const requestLogger = require("./middleware/requestLogger");
 const errorHandler = require("./middleware/errorHandler");
 
@@ -14,7 +14,8 @@ const app = express();
 
 app.use(cors());
 app.use(requestLogger);
-app.use(express.json());
+// A full film's captions can be a few hundred KB – the default limit is 100 KB.
+app.use(express.json({ limit: "2mb" }));
 
 app.use(voiceRoutes);
 app.use(summarizeRoutes);
@@ -23,6 +24,7 @@ app.use(chatRoutes);
 
 app.use(errorHandler);
 
-app.listen(3000, () => {
-  console.log("🚀 CineMate server running on port 3000");
+app.listen(config.port, () => {
+  console.log(`🚀 CineMate server running on port ${config.port}`);
+  console.log(`   ${config.describeConfig()}`);
 });
