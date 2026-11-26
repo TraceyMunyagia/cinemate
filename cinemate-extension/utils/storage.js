@@ -5,6 +5,7 @@
 //   cinemateSessions        -> [{ videoId, platform, title, url, count, updatedAt }]
 //   subtitles:<videoId>     -> [{ time, seconds, text }]
 //   history:<videoId>       -> [{ role: "user" | "assistant", content }]
+//   cinemateVoiceSettings   -> { input, output, language, whileTalking, autoSend }
 //
 // Used by both the content script and the discussion panel.
 
@@ -16,6 +17,15 @@
     SESSIONS: "cinemateSessions",
     LEGACY_SUBTITLES: "subtitles", // the old single shared list
     LEGACY_HISTORY: "cinemateHistory", // the old single shared chat
+    VOICE: "cinemateVoiceSettings",
+  };
+
+  const DEFAULT_VOICE_SETTINGS = {
+    input: "browser", // "browser" = Chrome speech recognition | "server" = backend Whisper
+    output: "browser", // "browser" = Chrome voice | "server" = backend pyttsx3 | "off" = text only
+    language: "", // "" = the browser's language, e.g. "en-KE" or "en-US"
+    whileTalking: "pause", // what the video does while you talk and CineMate replies: "pause" | "duck" | "off"
+    autoSend: true, // send as soon as you stop talking
   };
 
   const MAX_SESSIONS = 15; // older videos' captions get deleted
@@ -134,7 +144,18 @@
       [KEYS.SESSIONS]: sessions.filter((session) => session.videoId !== videoId),
     });
   }
+  // ---------- Voice settings ----------
 
+  async function getVoiceSettings() {
+    const result = await area().get(KEYS.VOICE);
+    return { ...DEFAULT_VOICE_SETTINGS, ...(result[KEYS.VOICE] || {}) };
+  }
+
+  async function saveVoiceSettings(changes) {
+    const settings = { ...(await getVoiceSettings()), ...changes };
+    await area().set({ [KEYS.VOICE]: settings });
+    return settings;
+  }
   // Earlier builds kept every video's captions and chat in one shared list.
   async function removeLegacyData() {
     await area().remove([KEYS.LEGACY_SUBTITLES, KEYS.LEGACY_HISTORY]);
@@ -149,6 +170,7 @@
 
   CineMate.storage = {
     KEYS,
+    DEFAULT_VOICE_SETTINGS,
     MAX_ENTRIES,
     MAX_SESSIONS,
     MAX_HISTORY_TURNS,
@@ -166,6 +188,8 @@
     appendHistory,
     clearHistory,
     forgetSession,
+    getVoiceSettings,
+    saveVoiceSettings,
     removeLegacyData,
     watch,
   };

@@ -52,6 +52,19 @@ globalThis.chrome = {
     throw new Error("Could not establish connection");
   };
   assert.strictEqual(await context.getPlayback({ videoId: "youtube-abc", tabId: 7 }), null);
+  // controlMedia sends hold/release to the right tab
+  const sentMessages = [];
+  chrome.tabs.sendMessage = async (tabId, message) => {
+    sentMessages.push({ tabId, ...message });
+    return { holding: message.command === "hold" };
+  };
+  assert.deepStrictEqual(await context.controlMedia({ tabId: 7 }, "hold", "pause"), { holding: true });
+  await context.controlMedia({ tabId: 7 }, "release");
+  assert.deepStrictEqual(sentMessages, [
+    { tabId: 7, action: "media", command: "hold", mode: "pause" },
+    { tabId: 7, action: "media", command: "release", mode: undefined },
+  ]);
+  assert.strictEqual(await context.controlMedia({}, "hold", "pause"), null, "no tab");
 
   console.log("✅ Chat context and spoiler guard work");
 })().catch((error) => {

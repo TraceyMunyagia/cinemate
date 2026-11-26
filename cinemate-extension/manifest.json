@@ -46,6 +46,7 @@
         "utils/subtitleCleaner.js",
         "utils/storage.js",
         "utils/videoInfo.js",
+        "utils/mediaControl.js",
         "content.js"
       ],
       "run_at": "document_idle"

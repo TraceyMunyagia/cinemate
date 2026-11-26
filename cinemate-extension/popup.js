@@ -2,6 +2,8 @@
 // The CineMate discussion panel: chat, voice, summary and sessions.
 // Each video has its own chat and saved memory, and the panel follows
 // whichever video is active (the tab you clicked 🎬 in or switched to last).
+// Voice uses Chrome's own speech recognition and voice by default, pauses
+// (or turns down) the video while you talk, and Stop / Esc cuts CineMate off.
 
 // ---------- Elements ----------
 
@@ -29,21 +31,29 @@ const newChatBtn = document.getElementById("newChatBtn");
 const personaButtons = document.querySelectorAll(".persona-pill");
 const videoTitleDiv = document.getElementById("videoTitle");
 const clearCaptionsBtn = document.getElementById("clearCaptionsBtn");
+const textForm = document.getElementById("textForm");
+const textInput = document.getElementById("textInput");
+const sendBtn = document.getElementById("sendBtn");
+const stopBtn = document.getElementById("stopBtn");
 
-const { storage, context, api, sessions, time } = globalThis.CineMate;
+const { storage, context, api, sessions, time, speech, listen } = globalThis.CineMate;
 
 const PERSONALITY_KEY = "cinematePersonality";
 const DEFAULT_PERSONALITY = "casualFriend";
 const WELCOME_MESSAGE = "Ask me about the scene, character choices, conflicts, or what just happened.";
 const SESSIONS_REFRESH_MS = 10000; // re-draw the Sessions tab at most this often
 const MEMORY_LIST_CACHE_MS = 30000; // how long to reuse GET /memory
+const DEFAULT_HINT = "Type a question or tap 🎙 to talk · Esc stops";
 
 // ---------- State ----------
 
-let mediaRecorder = null;
-let audioChunks = [];
-let micStream = null;
-let isRecording = false;
+let voiceSettings = { ...storage.DEFAULT_VOICE_SETTINGS };
+let listenSession = null; // the microphone session while you're talking
+let isListening = false;
+let listeningCancelled = false; // Esc while listening → "Stopped.", not "didn't catch that"
+let currentTurn = null; // { abort, voice } while CineMate is thinking or speaking
+let heldVideo = null; // the video we paused / turned down, so we restore the right one
+let isBusy = false;
 
 let currentPersonality = DEFAULT_PERSONALITY;
 let activeVideo = null; // the video the panel follows
@@ -63,17 +73,27 @@ let memoryListCache = { at: 0, list: [], failed: false };
 // ---------- Start ----------
 
 restorePersonality();
+loadVoiceSettings();
 refreshVideoInfo();
 storage.watch(handleStorageChange);
 
-talkBtn.addEventListener("click", async () => {
-  if (isRecording) {
-    stopRecording();
-    return;
-  }
-
-  await startRecording();
+textForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const message = textInput.value.trim();
+  if (!message || isBusy || isListening) return;
+  textInput.value = "";
+  sendTextMessage(message);
 });
+
+talkBtn.addEventListener("click", toggleListening);
+stopBtn.addEventListener("click", stopEverything);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") stopEverything();
+});
+
+// Closing the panel mid-reply shouldn't leave the video paused.
+window.addEventListener("pagehide", stopEverything);
 
 document.querySelectorAll("[data-message]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -141,6 +161,11 @@ async function refreshVideoInfo() {
 }
 
 function handleStorageChange(changes) {
+  if (changes[storage.KEYS.VOICE]) {
+    voiceSettings = { ...storage.DEFAULT_VOICE_SETTINGS, ...(changes[storage.KEYS.VOICE].newValue || {}) };
+    updateHint();
+  }
+
   const activeChanged = Boolean(changes[storage.KEYS.ACTIVE]);
   const captionsChanged =
     activeVideo && Boolean(changes[storage.subtitleKey(activeVideo.videoId)]);
@@ -187,7 +212,7 @@ async function loadSavedMemory(videoId, token) {
   try {
     record = await api.getMemory(videoId);
   } catch (err) {
-    console.info("Saved memory unavailable:", err.message);
+    console.warn("Could not load saved memory:", err.message);
     return; // server offline – the panel still works without it
   }
 
@@ -221,51 +246,84 @@ function revealHiddenSummary() {
 // ---------- Chat ----------
 
 async function sendTextMessage(message) {
+  const text = String(message || "").trim();
+  if (!text || isBusy) return;
+
   setBusy(true);
 
   // The reply belongs to this video's chat, even if you switch tabs meanwhile.
   const video = activeVideo;
   const videoId = chatVideoId;
   const history = conversationHistory.slice();
+  const turn = { abort: new AbortController(), voice: null };
+  currentTurn = turn;
+  showStopButton(true);
 
   try {
     setView("chat");
-    addMessage("You", message, { videoId });
+    addMessage("You", text, { videoId });
     statusDiv.innerText = "Thinking...";
     showThinking();
 
-    const reply = await askCineMate(message, { video, history });
+    const reply = await askCineMate(text, { video, history, signal: turn.abort.signal });
 
     hideThinking();
     addMessage("CineMate", reply, { videoId });
 
-    if (videoId === chatVideoId) {
-      await speak(reply);
-      statusDiv.innerText = "Ready";
-    } else {
+    if (videoId !== chatVideoId) {
       statusDiv.innerText = `Reply saved to the chat for "${video?.title || "the previous video"}".`;
+      return;
     }
+
+    if (voiceSettings.output === "off") {
+      statusDiv.innerText = "Ready";
+      return;
+    }
+
+    // Typed questions: the video keeps playing until CineMate starts talking.
+    holdMedia(video);
+    turn.voice = speech.speak(reply, {
+      ...voiceSettings,
+      language: speakingLanguage(),
+      apiBase: api.API_BASE,
+    });
+    statusDiv.innerText = "Speaking… (Esc to stop)";
+
+    const outcome = await turn.voice.done;
+    statusDiv.innerText = outcome === "stopped" ? "Stopped." : "Ready";
   } catch (err) {
-    console.error(err);
     hideThinking();
-    showError(err, "Error talking to AI.");
+
+    if (err?.name === "AbortError") {
+      statusDiv.innerText = "Stopped.";
+    } else {
+      console.error(err);
+      showError(err, "Error talking to AI.");
+    }
   } finally {
+    if (currentTurn === turn) currentTurn = null;
+    releaseMedia();
+    showStopButton(false);
     setBusy(false);
   }
 }
 
-async function askCineMate(message, { video, history }) {
+async function askCineMate(message, { video, history, signal }) {
   const { subtitles, currentSeconds } = await getViewingContext(video);
 
-  const data = await api.post("/chat", {
-    subtitles: context.forChat(subtitles, currentSeconds),
-    message,
-    personality: currentPersonality,
-    history,
-    episodeId: video?.videoId,
-    videoTitle: video?.title,
-    currentSeconds,
-  });
+  const data = await api.post(
+    "/chat",
+    {
+      subtitles: context.forChat(subtitles, currentSeconds),
+      message,
+      personality: currentPersonality,
+      history,
+      episodeId: video?.videoId,
+      videoTitle: video?.title,
+      currentSeconds,
+    },
+    { signal }
+  );
 
   return data.reply;
 }
@@ -612,19 +670,21 @@ function setView(view) {
   if (view === "sessions") renderSessions(true);
 }
 
-function setBusy(isBusy) {
+function setBusy(busy) {
+  isBusy = busy;
+
   const quickActionButtons = Array.from(document.querySelectorAll("[data-message]"));
   const coolingDown = Date.now() < cooldownUntil;
-  const aiButtons = [summaryBtn, ...quickActionButtons];
+  const aiButtons = [summaryBtn, sendBtn, ...quickActionButtons];
 
-  [summaryBtn, saveNotesBtn, newChatBtn, ...personaButtons, ...quickActionButtons].forEach(
+  [summaryBtn, sendBtn, saveNotesBtn, newChatBtn, ...personaButtons, ...quickActionButtons].forEach(
     (button) => {
-      if (button) button.disabled = isBusy || (coolingDown && aiButtons.includes(button));
+      if (button) button.disabled = busy || (coolingDown && aiButtons.includes(button));
     }
   );
 
-  if (!isRecording) {
-    talkBtn.disabled = isBusy || coolingDown;
+  if (!isListening) {
+    talkBtn.disabled = busy || coolingDown;
   }
 }
 
@@ -680,157 +740,130 @@ function startCooldown(seconds, reason) {
 
 // ---------- Voice ----------
 
-async function startRecording() {
-  try {
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      statusDiv.innerText = "Voice recording is not supported in this browser.";
-      return;
-    }
+async function loadVoiceSettings() {
+  voiceSettings = await storage.getVoiceSettings();
+  updateHint();
+}
 
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioChunks = [];
-    const mimeType = getSupportedMimeType();
-    const recorderOptions = mimeType ? { mimeType } : undefined;
-    mediaRecorder = new MediaRecorder(micStream, recorderOptions);
+function speakingLanguage() {
+  return voiceSettings.language || navigator.language || "en-US";
+}
 
-    mediaRecorder.addEventListener("dataavailable", (event) => {
-      if (event.data.size > 0) {
-        audioChunks.push(event.data);
-      }
-    });
+function updateHint() {
+  const noBrowserVoice = voiceSettings.input === "browser" && !listen.isBrowserSupported();
+  voiceHint.innerText = noBrowserVoice ? "Voice input isn't available here – type your question" : DEFAULT_HINT;
+}
 
-    mediaRecorder.addEventListener("stop", handleRecordingStop);
-    mediaRecorder.start();
-
-    isRecording = true;
-    talkBtn.innerText = "■";
-    talkBtn.classList.add("recording");
-    statusDiv.innerText = "Listening...";
-    if (voiceHint) voiceHint.innerText = "Tap to stop";
-  } catch (err) {
-    stopMicStream();
-    console.warn(`Microphone unavailable (${err.name}): ${err.message}`);
-    statusDiv.innerText =
-      err.name === "NotAllowedError"
-        ? "Microphone blocked – allow it for CineMate in Chrome's site settings."
-        : err.name === "NotFoundError"
-          ? "No microphone found."
-          : "Could not access microphone.";
+// 🎙 starts listening; tapping it again finishes early and sends what you said.
+async function toggleListening() {
+  if (isListening) {
+    listenSession?.stop();
+    if (voiceSettings.input === "server") statusDiv.innerText = "Transcribing...";
+    return;
   }
+
+  if (isBusy) return;
+  await startListening();
 }
 
-function stopRecording() {
-  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
+async function startListening() {
+  const video = activeVideo;
+  let transcript = "";
+  let failed = false;
 
-  statusDiv.innerText = "Transcribing...";
-  mediaRecorder.stop();
-  isRecording = false;
-  talkBtn.innerText = "🎙";
-  talkBtn.classList.remove("recording");
-  if (voiceHint) voiceHint.innerText = "Processing...";
-}
-
-async function handleRecordingStop() {
-  stopMicStream();
-  setBusy(true);
+  holdMedia(video); // so the mic hears you, not the film
+  listeningCancelled = false;
+  isListening = true;
+  updateMicButton();
+  textInput.value = "";
+  textInput.readOnly = true;
+  textInput.classList.add("listening");
+  statusDiv.innerText =
+    voiceSettings.input === "server" ? "Recording… tap ■ when you're done." : "Listening…";
 
   try {
-    const audioBlob = new Blob(audioChunks, {
-      type: getSupportedMimeType(),
-    });
-
-    const transcript = await transcribeAudio(audioBlob);
-
-    if (!transcript) {
-      statusDiv.innerText = "I could not hear anything clearly.";
-      return;
-    }
-
-    statusDiv.innerText = `You said: "${transcript}"`;
-    await sendTextMessage(transcript);
+    listenSession = await listen.start(
+      { ...voiceSettings, language: speakingLanguage(), apiBase: api.API_BASE },
+      { onInterim: (text) => (textInput.value = text) }
+    );
+    ({ transcript } = await listenSession.result);
   } catch (err) {
     console.error(err);
-    statusDiv.innerText = "Error talking to AI.";
+    failed = true;
+    statusDiv.innerText = err.message || "Voice input failed.";
   } finally {
-    setBusy(false);
-    if (voiceHint) voiceHint.innerText = "Tap to speak";
+    listenSession = null;
+    isListening = false;
+    updateMicButton();
+    textInput.readOnly = false;
+    textInput.classList.remove("listening");
+  }
+
+  if (!transcript) {
+    releaseMedia();
+    textInput.value = "";
+    if (listeningCancelled) statusDiv.innerText = "Stopped.";
+    else if (!failed) statusDiv.innerText = "I didn't catch that – try again or type your question.";
+    return;
+  }
+
+  if (voiceSettings.autoSend) {
+    textInput.value = "";
+    await sendTextMessage(transcript); // keeps the video held until CineMate finishes
+  } else {
+    releaseMedia();
+    textInput.value = transcript;
+    textInput.focus();
+    statusDiv.innerText = "Edit if you like, then press Enter.";
   }
 }
 
-async function transcribeAudio(audioBlob) {
-  const response = await fetch(`${api.API_BASE}/transcribe`, {
-    method: "POST",
-    headers: {
-      "Content-Type": audioBlob.type || "audio/webm",
-    },
-    body: audioBlob,
-  });
+function updateMicButton() {
+  talkBtn.innerText = isListening ? "■" : "🎙";
+  talkBtn.title = isListening ? "Finish talking" : "Talk to CineMate";
+  talkBtn.classList.toggle("recording", isListening);
+  talkBtn.disabled = !isListening && isBusy;
+}
 
-  const data = await response.json();
+function showStopButton(visible) {
+  stopBtn.hidden = !visible;
+  talkBtn.hidden = visible;
+}
 
-  if (!response.ok || !data.success) {
-    throw new Error(data.error || "Transcription failed.");
+// Stop button / Esc: stop listening, cancel the request, cut the voice off.
+function stopEverything() {
+  if (isListening) {
+    listeningCancelled = true;
+    listenSession?.cancel();
   }
 
-  return data.transcript.trim();
-}
-
-function getSupportedMimeType() {
-  const types = [
-    "audio/webm;codecs=opus",
-    "audio/webm",
-    "audio/mp4",
-  ];
-
-  return types.find((type) => MediaRecorder.isTypeSupported(type)) || "";
-}
-
-function stopMicStream() {
-  if (!micStream) return;
-
-  micStream.getTracks().forEach((track) => track.stop());
-  micStream = null;
-}
-
-async function speak(text) {
-  try {
-    const response = await fetch(`${api.API_BASE}/tts`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ text }),
-    });
-
-    if (response.status === 204) {
-      speakWithBrowserTts(text);
-      return;
-    }
-
-    if (!response.ok) {
-      throw new Error("Local TTS request failed.");
-    }
-
-    const audioBlob = await response.blob();
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-
-    audio.addEventListener("ended", () => URL.revokeObjectURL(audioUrl), {
-      once: true,
-    });
-
-    await audio.play();
-  } catch (err) {
-    console.warn("Falling back to browser TTS:", err);
-    speakWithBrowserTts(text);
+  if (currentTurn) {
+    currentTurn.abort.abort();
+    currentTurn.voice?.stop();
   }
+
+  releaseMedia();
 }
 
-function speakWithBrowserTts(text) {
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1;
-  speechSynthesis.cancel();
-  speechSynthesis.speak(utterance);
+// ---------- Pausing / turning down the video ----------
+
+// Called when you start talking and again when CineMate starts speaking; the
+// tab keeps the first hold, and the second one just restarts its 2-minute
+// safety timer so a long reply isn't cut short.
+function holdMedia(video) {
+  if (!video || voiceSettings.whileTalking === "off") return;
+  if (heldVideo && heldVideo.videoId !== video.videoId) releaseMedia();
+
+  heldVideo = video;
+  context.controlMedia(video, "hold", voiceSettings.whileTalking);
+}
+
+function releaseMedia() {
+  if (!heldVideo) return;
+
+  const video = heldVideo;
+  heldVideo = null;
+  context.controlMedia(video, "release");
 }
 
 function escapeHtml(text) {

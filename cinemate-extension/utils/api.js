@@ -17,7 +17,8 @@
     }
   }
 
-  async function request(method, path, body) {
+  // options.signal: an AbortSignal, so the Stop button can cancel a request.
+  async function request(method, path, body, options = {}) {
     let response;
 
     try {
@@ -25,8 +26,10 @@
         method,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
+        signal: options.signal,
       });
-    } catch {
+    } catch (error) {
+      if (error?.name === "AbortError") throw error; // stopped on purpose
       throw new ApiError("Can't reach the CineMate server – is it running on localhost:3000?", 0);
     }
 
@@ -54,7 +57,7 @@
   CineMate.api = {
     API_BASE,
     ApiError,
-    post: (path, body) => request("POST", path, body),
+    post: (path, body, options) => request("POST", path, body, options),    
     get: (path) => request("GET", path),
     getMemory,
     listMemories: async () => (await request("GET", "/memory")).episodes || [],

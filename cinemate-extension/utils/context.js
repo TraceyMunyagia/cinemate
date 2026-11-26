@@ -43,5 +43,17 @@
     }
   }
 
-  CineMate.context = { upTo, forChat, getPlayback };
+    // Asks the video's tab to pause / turn down ("hold") or restore ("release")
+  // the video. mode: "pause" | "duck". Returns the tab's reply or null.
+  async function controlMedia(activeVideo, command, mode) {
+    if (!activeVideo?.tabId) return null;
+
+    try {
+      return await chrome.tabs.sendMessage(activeVideo.tabId, { action: "media", command, mode });
+    } catch {
+      return null; // tab closed or reloaded – nothing to restore
+    }
+  }
+
+  CineMate.context = { upTo, forChat, getPlayback, controlMedia };
 })(globalThis);

@@ -17,9 +17,14 @@ function optionalSubtitles(subtitles) {
   }
 }
 
+const MAX_MESSAGE_CHARS = 1000;
+
 function requireMessage(message) {
   if (!message || typeof message !== "string" || message.trim() === "") {
     throw new HttpError(400, "Invalid or missing message.");
+  }
+  if (message.length > MAX_MESSAGE_CHARS) {
+    throw new HttpError(400, `Message is too long (max ${MAX_MESSAGE_CHARS} characters).`);
   }
 }
 

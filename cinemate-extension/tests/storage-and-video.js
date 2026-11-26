@@ -137,6 +137,12 @@ const at = (href) => new URL(href);
   data.cinemateHistory = [{ role: "user", content: "old" }];
   await storage.removeLegacyData();
   assert.ok(!("cinemateHistory" in data));
+  assert.deepStrictEqual(await storage.getVoiceSettings(), storage.DEFAULT_VOICE_SETTINGS, "defaults");
+  await storage.saveVoiceSettings({ output: "off", language: "en-KE" });
+  const voice = await storage.getVoiceSettings();
+  assert.strictEqual(voice.output, "off");
+  assert.strictEqual(voice.language, "en-KE");
+  assert.strictEqual(voice.input, "browser", "untouched settings keep their defaults");
 
   console.log("✅ Storage and video detection work");
 })().catch((error) => {

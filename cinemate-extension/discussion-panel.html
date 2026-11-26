@@ -240,23 +240,72 @@ body {
   cursor: pointer;
 }
 
-.voice {
-  text-align: center;
-  padding: 14px 16px 16px;
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px 6px;
   border-top: 1px solid #1F2937;
 }
 
-.mic {
-  width: 70px;
-  height: 70px;
-  background: #7C3AED;
+.text-form {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  background: #111827;
+  border: 1px solid #1F2937;
+  border-radius: 12px;
+}
+
+.text-form:focus-within {
+  border-color: #7C3AED;
+}
+
+#textInput {
+  flex: 1;
+  min-width: 0;
+  padding: 10px 12px;
+  background: transparent;
+  border: 0;
+  outline: none;
+  color: white;
+  font-size: 13px;
+}
+
+#textInput.listening {
+  color: #C4B5FD;
+  font-style: italic;
+}
+
+.send-btn {
+  border: 0;
+  background: transparent;
+  color: #A78BFA;
+  font-size: 16px;
+  padding: 0 12px;
+  cursor: pointer;
+}
+
+.mic,
+.stop-btn {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   border: 0;
   border-radius: 50%;
-  margin: 0 auto 10px;
-  box-shadow: 0 0 30px rgba(124, 58, 237, 0.7);
   color: white;
-  font-size: 28px;
   cursor: pointer;
+}
+
+.mic {
+  background: #7C3AED;
+  box-shadow: 0 0 18px rgba(124, 58, 237, 0.6);
+  font-size: 20px;
+}
+
+.stop-btn {
+  background: #DC2626;
+  font-size: 15px;
 }
 
 .mic.recording {
@@ -272,7 +321,9 @@ body {
 
 .hint {
   color: #A1A1AA;
-  font-size: 12px;
+  font-size: 11px;
+  text-align: center;
+  padding: 0 16px 12px;
 }
 
 button:disabled {
@@ -477,10 +528,15 @@ button:disabled {
     <button id="summaryBtn" class="action">Generate summary</button>
   </div>
 
-  <div class="voice">
-    <button id="talkBtn" class="mic" title="Start or stop recording">🎙</button>
-    <div id="voiceHint" class="hint">Tap to speak</div>
+    <div class="composer">
+    <form id="textForm" class="text-form">
+      <input id="textInput" type="text" maxlength="1000" autocomplete="off" placeholder="Ask about this scene…" />
+      <button id="sendBtn" class="send-btn" type="submit" title="Send">➤</button>
+    </form>
+    <button id="talkBtn" class="mic" title="Talk to CineMate">🎙</button>
+    <button id="stopBtn" class="stop-btn" title="Stop (Esc)" hidden>■</button>
   </div>
+  <div id="voiceHint" class="hint">Type a question or tap 🎙 to talk · Esc stops</div>
 
   <div class="nav">
     <button id="chatTab" class="active">Chat</button>
@@ -494,6 +550,7 @@ button:disabled {
 <script src="utils/context.js"></script>
 <script src="utils/api.js"></script>
 <script src="utils/sessions.js"></script>
-<script src="popup.js"></script>
+<script src="utils/speech.js"></script>
+<script src="utils/listen.js"></script><script src="popup.js"></script>
 </body>
 </html>

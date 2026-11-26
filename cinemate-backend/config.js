@@ -41,10 +41,20 @@ const config = {
 
   // How long one request may wait (rate-limit queue + retries) before
   // CineMate gives up and tells the panel to try again later.
-  ai: {
+    ai: {
     maxRetries: readNumber("AI_MAX_RETRIES", 2),
     chatMaxWaitMs: readNumber("AI_CHAT_MAX_WAIT_MS", 8000),
     summaryMaxWaitMs: readNumber("AI_SUMMARY_MAX_WAIT_MS", 45000),
+  },
+
+  // Server-side voice is optional: the panel uses the browser's own speech
+  // recognition and voice by default, and only calls these when asked to.
+  voice: {
+    useLocalWhisper: readBool("USE_LOCAL_WHISPER", true),
+    useLocalTts: readBool("USE_LOCAL_TTS", true),
+    whisperModel: process.env.WHISPER_MODEL || "tiny",
+    pythonBin: process.env.PYTHON_BIN || "python3",
+    openaiApiKey: process.env.OPENAI_API_KEY || "",
   },
 };
 

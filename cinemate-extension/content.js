@@ -4,8 +4,7 @@
 // Depends on utils/*.js, which the manifest loads first.
 
 (function () {
-  const { time, captions, storage, video: videoInfo } = globalThis.CineMate;
-
+  const { time, captions, storage, video: videoInfo, media } = globalThis.CineMate;
   const CAPTURE_INTERVAL_MS = 1000;
   const SAVE_DELAY_MS = 2000;
 
@@ -21,8 +20,11 @@
   let syncing = null; // in-flight syncSession() promise
   let button = null;
   let intervalId = null;
+  let stopped = false; // set once the extension is reloaded under this tab
   let tabId = null; // this tab's id, so the panel can ask for the playback time
 
+  // Pauses / turns down the video while you talk to CineMate.
+  const mediaController = media.createMediaController({ getVideo: () => time.getVideoElement() });
   console.log("🎬 CineMate content script running");
 
   // ---------- Captions ----------
@@ -56,8 +58,8 @@
     try {
       await storage.saveSubtitles(session, tracker.entries);
     } catch (error) {
-      console.warn("CineMate could not save captions:", error);
       dirty = true;
+      onBackgroundError(error);
     }
   }
 
@@ -95,6 +97,7 @@
     }
 
     await flush(); // save the previous video before switching
+    mediaController.release(); // never leave the old video paused or quiet
 
     if (!current) {
       session = null;
@@ -113,6 +116,7 @@
       title: current.title || saved?.title || "",
       tabId: await getTabId(),
     };
+    tracker = captions.createTracker(entries);
 
     await storage.setActiveVideo(session);
     updateButton();
@@ -124,7 +128,7 @@
   function refreshTitle(current) {
     if (!session || !current?.title || current.title === session.title) return;
     session = { ...session, title: current.title };
-    storage.setActiveVideo(session);
+    storage.setActiveVideo(session).catch(onBackgroundError);
     scheduleSave();
   }
 
@@ -145,15 +149,33 @@
       return;
     }
 
-    await syncSession();
+    try {
+      await syncSession();
+    } catch (error) {
+      onBackgroundError(error);
+      return;
+    }
     if (!session || !tracker) return;
 
     const changed = tracker.push(readCaptionText(), time.getPlaybackSeconds());
     if (changed) scheduleSave();
   }
 
+  // Fire-and-forget storage calls end up here. A reloaded extension throws
+  // "Extension context invalidated" – that just means this tab is stale.
+  function onBackgroundError(error) {
+    if (!chrome.runtime?.id || /context invalidated/i.test(error?.message || "")) {
+      shutDown();
+    } else {
+      console.warn("CineMate:", error);
+    }
+  }
+
   function shutDown() {
+    if (stopped) return;
+    stopped = true;
     clearInterval(intervalId);
+    clearTimeout(saveTimer);
     button?.remove();
     console.log("CineMate was reloaded – refresh this tab to reconnect.");
   }
@@ -189,8 +211,12 @@
     });
 
     btn.addEventListener("click", async () => {
-      await activateSession();
-      chrome.runtime.sendMessage({ action: "openDiscussionPanel" });
+      try {
+        await activateSession();
+        await chrome.runtime.sendMessage({ action: "openDiscussionPanel" });
+      } catch (error) {
+        onBackgroundError(error);
+      }
     });
 
     document.body.appendChild(btn);
@@ -212,6 +238,14 @@
       return true; // keep the channel open for the async reply
     }
 
+
+    // The panel pausing / turning down the video while you talk.
+    if (message.action === "media") {
+      const state =
+        message.command === "hold" ? mediaController.hold(message.mode) : mediaController.release();
+      sendResponse({ videoId: session?.videoId || null, ...state });
+      return;
+    }
     // The panel asking where the viewer is (spoiler guard).
     if (message.action === "getPlayback") {
       const video = time.getVideoElement();
@@ -234,23 +268,27 @@
   });
 
   // YouTube changes videos without reloading the page.
-  document.addEventListener("yt-navigate-finish", () => syncSession());
+  document.addEventListener("yt-navigate-finish", () => {
+    if (!stopped) syncSession().catch(onBackgroundError);
+  });
 
   // Coming back to this tab makes its video the active one again.
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible" && session) {
-      storage.setActiveVideo(session);
+    if (document.visibilityState === "visible" && session && !stopped) {
+      storage.setActiveVideo(session).catch(onBackgroundError);
     }
   });
 
-  window.addEventListener("pagehide", flush);
+  window.addEventListener("pagehide", () => {
+    if (!stopped) flush();
+  });
 
   // ---------- Start ----------
 
-  storage.removeLegacyData();
+  Promise.resolve(storage.removeLegacyData()).catch(onBackgroundError);
   button = createButton();
   intervalId = setInterval(tick, CAPTURE_INTERVAL_MS);
-  syncSession();
+  syncSession().catch(onBackgroundError);
 
   // Debugging: pick "CineMate AI" in the DevTools console's context dropdown.
   globalThis.CineMate.debug = {
