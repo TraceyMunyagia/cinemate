@@ -4,6 +4,7 @@
 //   cinemateActiveVideo     -> { videoId, platform, title, url, activatedAt }
 //   cinemateSessions        -> [{ videoId, platform, title, url, count, updatedAt }]
 //   subtitles:<videoId>     -> [{ time, seconds, text }]
+//   history:<videoId>       -> [{ role: "user" | "assistant", content }]
 //
 // Used by both the content script and the discussion panel.
 
@@ -14,13 +15,16 @@
     ACTIVE: "cinemateActiveVideo",
     SESSIONS: "cinemateSessions",
     LEGACY_SUBTITLES: "subtitles", // the old single shared list
+    LEGACY_HISTORY: "cinemateHistory", // the old single shared chat
   };
 
   const MAX_SESSIONS = 15; // older videos' captions get deleted
   const MAX_ENTRIES = 5000; // per video, oldest dropped first
+  const MAX_HISTORY_TURNS = 100; // per video; the backend only uses the last 10
 
   const area = () => chrome.storage.local;
   const subtitleKey = (videoId) => `subtitles:${videoId}`;
+  const historyKey = (videoId) => `history:${videoId || "none"}`; // "none" = no video open
 
   async function getActiveVideo() {
     const result = await area().get(KEYS.ACTIVE);
@@ -67,7 +71,9 @@
     await area().set({ [KEYS.SESSIONS]: keep });
 
     if (drop.length > 0) {
-      await area().remove(drop.map((session) => subtitleKey(session.videoId)));
+      await area().remove(
+        drop.flatMap((session) => [subtitleKey(session.videoId), historyKey(session.videoId)])
+      );
     }
   }
 
@@ -91,9 +97,47 @@
     });
   }
 
-  // The pre-Week-1 build kept every video's captions in one "subtitles" list.
+  async function getSession(videoId) {
+    const sessions = await listSessions();
+    return sessions.find((session) => session.videoId === videoId) || null;
+  }
+
+  // ---------- Chat history (one per video) ----------
+
+  async function getHistory(videoId) {
+    const key = historyKey(videoId);
+    const result = await area().get(key);
+    return Array.isArray(result[key]) ? result[key] : [];
+  }
+
+  async function saveHistory(videoId, turns) {
+    const trimmed = turns.length > MAX_HISTORY_TURNS ? turns.slice(-MAX_HISTORY_TURNS) : turns;
+    await area().set({ [historyKey(videoId)]: trimmed });
+    return trimmed;
+  }
+
+  async function appendHistory(videoId, turn) {
+    const turns = await getHistory(videoId);
+    return saveHistory(videoId, [...turns, turn]);
+  }
+
+  async function clearHistory(videoId) {
+    await area().remove(historyKey(videoId));
+  }
+
+  // "Forget" in the Sessions tab: captions, chat and the session entry.
+  async function forgetSession(videoId) {
+    await area().remove([subtitleKey(videoId), historyKey(videoId)]);
+
+    const sessions = await listSessions();
+    await area().set({
+      [KEYS.SESSIONS]: sessions.filter((session) => session.videoId !== videoId),
+    });
+  }
+
+  // Earlier builds kept every video's captions and chat in one shared list.
   async function removeLegacyData() {
-    await area().remove(KEYS.LEGACY_SUBTITLES);
+    await area().remove([KEYS.LEGACY_SUBTITLES, KEYS.LEGACY_HISTORY]);
   }
 
   // callback(changes) runs whenever anything in local storage changes.
@@ -107,13 +151,21 @@
     KEYS,
     MAX_ENTRIES,
     MAX_SESSIONS,
+    MAX_HISTORY_TURNS,
     subtitleKey,
+    historyKey,
     getActiveVideo,
     setActiveVideo,
     getSubtitles,
     saveSubtitles,
     clearSubtitles,
     listSessions,
+    getSession,
+    getHistory,
+    saveHistory,
+    appendHistory,
+    clearHistory,
+    forgetSession,
     removeLegacyData,
     watch,
   };

@@ -104,9 +104,15 @@
     }
 
     // Resume if this video was captured before.
+    // Resume if this video was captured before – including its title, since
+    // Netflix only shows the title while the player controls are visible.
     const entries = await storage.getSubtitles(current.videoId);
-    session = { ...current, tabId: await getTabId() };
-    tracker = captions.createTracker(entries);
+    const saved = await storage.getSession(current.videoId);
+    session = {
+      ...current,
+      title: current.title || saved?.title || "",
+      tabId: await getTabId(),
+    };
 
     await storage.setActiveVideo(session);
     updateButton();

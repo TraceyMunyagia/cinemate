@@ -52,3 +52,36 @@ test("a saved summary that covers later scenes is kept out of chat", () => {
   assert.strictEqual(context.spoilerSafeMemory(record, 600), null); // viewer rewound to 10:00
   assert.ok(context.spoilerSafeMemory(record, 2410)); // viewer is past it
 });
+test("memoryForChat uses the whole memory when it doesn't run ahead", () => {
+  const record = { episodeMemory: { summary: "S", coverage: { endSeconds: 600, endTime: "00:10:00" } } };
+  const result = context.memoryForChat(record, 900);
+  assert.strictEqual(result.scope, "full");
+  assert.strictEqual(result.coveredUntil, "00:10:00");
+});
+
+test("memoryForChat keeps only earlier, timestamped events after a rewind", () => {
+  const record = {
+    episodeMemory: {
+      summary: "Covers the twist",
+      coverage: { endSeconds: 2400 },
+      importantEvents: [
+        { time: "00:02:00", description: "early" },
+        { time: "unknown", description: "no time" },
+        { time: "00:30:00", description: "the twist" },
+      ],
+    },
+  };
+
+  const result = context.memoryForChat(record, 600);
+  assert.strictEqual(result.scope, "partial");
+  assert.deepStrictEqual(result.memory.importantEvents.map((e) => e.description), ["early"]);
+  assert.strictEqual(result.memory.summary, undefined, "summary left out");
+});
+
+test("memoryForChat returns null when nothing is safe", () => {
+  const record = {
+    episodeMemory: { summary: "S", coverage: { endSeconds: 2400 }, importantEvents: [{ time: "00:30:00", description: "late" }] },
+  };
+  assert.strictEqual(context.memoryForChat(record, 600), null);
+  assert.strictEqual(context.memoryForChat(null, 600), null);
+});

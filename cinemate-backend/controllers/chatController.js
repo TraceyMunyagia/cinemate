@@ -27,10 +27,11 @@ async function chat(req, res, next) {
     // Last few minutes before the viewer's position – nothing after it.
     const recent = contextService.recentDialogue(subtitles || [], currentSeconds);
 
-    // The saved summary helps with "story so far" questions, but only if it
-    // doesn't cover scenes the viewer hasn't reached.
+    // The saved episode memory (summary, characters, conflicts, events) –
+    // only the parts that don't go past the viewer's position.
     const saved = episodeId ? await memoryService.getEpisodeMemory(episodeId) : null;
-    const memory = contextService.spoilerSafeMemory(saved, currentSeconds);
+    const episodeMemory = contextService.memoryForChat(saved, currentSeconds);
+    const memoryScope = episodeMemory?.scope || "none";
 
     const currentTime = Number.isFinite(currentSeconds) ? secondsToTime(currentSeconds) : null;
 
@@ -40,8 +41,8 @@ async function chat(req, res, next) {
         mock: true,
         reply:
           `Mock reply (${getPersona(personality).label}) at ${currentTime || "unknown time"}, ` +
-          `using ${recent.length} lines of dialogue${memory ? " + the episode summary" : ""}, to: "${message}"`,
-        context: { lines: recent.length, usedSummary: Boolean(memory) },
+          `using ${recent.length} lines of dialogue + memory: ${memoryScope}, to: "${message}"`,
+        context: { lines: recent.length, memory: memoryScope },
       });
     }
 
@@ -51,9 +52,7 @@ async function chat(req, res, next) {
       dialogue: contextService.formatDialogue(recent),
       currentTime,
       videoTitle,
-      episodeSummary: memory
-        ? { text: memory.summary, coveredUntil: memory.coverage?.endTime || "earlier" }
-        : null,
+      episodeMemory,
     });
 
     const reply = await aiService.generateReply(prompt, buildDiscussionSystemPrompt({ personality }));
@@ -62,7 +61,7 @@ async function chat(req, res, next) {
       success: true,
       provider: aiService.getProviderName(),
       reply,
-      context: { lines: recent.length, usedSummary: Boolean(memory) },
+      context: { lines: recent.length, memory: memoryScope },
     });
   } catch (error) {
     next(error);

@@ -110,6 +110,34 @@ const at = (href) => new URL(href);
   assert.strictEqual(saved.length, storage.MAX_ENTRIES);
   assert.strictEqual(saved[0].text, "10", "oldest lines dropped first");
 
+  // ---- Chat history per video (Week 3) ----
+  await storage.appendHistory("netflix-2", { role: "user", content: "Who is she?" });
+  await storage.appendHistory("netflix-2", { role: "assistant", content: "Amara." });
+  await storage.appendHistory("youtube-v5", { role: "user", content: "Different video" });
+
+  assert.deepStrictEqual((await storage.getHistory("netflix-2")).map((t) => t.content), ["Who is she?", "Amara."]);
+  assert.strictEqual((await storage.getHistory("youtube-v5")).length, 1, "histories are separate");
+  assert.deepStrictEqual(await storage.getHistory(null), [], "no video = its own empty chat");
+
+  const longChat = Array.from({ length: storage.MAX_HISTORY_TURNS + 5 }, (_, i) => ({ role: "user", content: `${i}` }));
+  await storage.saveHistory("netflix-2", longChat);
+  assert.strictEqual((await storage.getHistory("netflix-2")).length, storage.MAX_HISTORY_TURNS);
+
+  await storage.clearHistory("netflix-2");
+  assert.deepStrictEqual(await storage.getHistory("netflix-2"), []);
+
+  // ---- getSession / forgetSession ----
+  assert.strictEqual((await storage.getSession("youtube-v5")).title, "Video 5");
+  await storage.forgetSession("youtube-v5");
+  assert.strictEqual(await storage.getSession("youtube-v5"), null);
+  assert.deepStrictEqual(await storage.getSubtitles("youtube-v5"), []);
+  assert.deepStrictEqual(await storage.getHistory("youtube-v5"), []);
+
+  // ---- Legacy shared chat is removed ----
+  data.cinemateHistory = [{ role: "user", content: "old" }];
+  await storage.removeLegacyData();
+  assert.ok(!("cinemateHistory" in data));
+
   console.log("✅ Storage and video detection work");
 })().catch((error) => {
   console.error(error);

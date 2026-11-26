@@ -1,5 +1,6 @@
 const memoryService = require("../services/memoryService");
 
+// GET /memory/:episodeId
 async function getMemory(req, res, next) {
   try {
     const record = await memoryService.getEpisodeMemory(req.params.episodeId);
@@ -17,6 +18,7 @@ async function getMemory(req, res, next) {
   }
 }
 
+// GET /memory
 async function listMemories(req, res, next) {
   try {
     const episodes = await memoryService.listEpisodeMemories();
@@ -26,4 +28,14 @@ async function listMemories(req, res, next) {
   }
 }
 
-module.exports = { getMemory, listMemories };
+// DELETE /memory/:episodeId  (the panel's "Forget" button)
+async function deleteMemory(req, res, next) {
+  try {
+    const deleted = await memoryService.deleteEpisodeMemory(req.params.episodeId);
+    res.json({ success: true, deleted });
+  } catch (error) {
+    next(error);
+  }
+}
+
+module.exports = { getMemory, listMemories, deleteMemory };

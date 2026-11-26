@@ -9,12 +9,13 @@ const {
   optionalBoolean,
 } = require("../utils/validators");
 
-// POST /summarize  { subtitles, episodeId?, currentSeconds?, force? }
+// POST /summarize  { subtitles, episodeId?, videoTitle?, currentSeconds?, force? }
 async function summarize(req, res, next) {
   try {
-    const { subtitles, episodeId, currentSeconds, force } = req.body;
+    const { subtitles, episodeId, videoTitle, currentSeconds, force } = req.body;
     requireSubtitles(subtitles);
     optionalString(episodeId, "episodeId", 200);
+    optionalString(videoTitle, "videoTitle", 300);
     optionalNumber(currentSeconds, "currentSeconds");
     optionalBoolean(force, "force");
 
@@ -48,6 +49,7 @@ async function summarize(req, res, next) {
     // Mock summaries are saved but never served from the cache.
     await memoryService.saveEpisodeMemory(id, episodeMemory, {
       fingerprint: mock ? null : fingerprint,
+      title: videoTitle,
     });
 
     res.json({

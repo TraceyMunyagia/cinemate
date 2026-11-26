@@ -38,28 +38,59 @@
     return platform && id ? `${platform}-${id}` : null;
   }
 
-  // Best-effort title. Netflix only shows it while the player controls are
-  // visible, so the content script keeps retrying until it finds one.
-  function getVideoTitle(doc, loc) {
-    const page = doc || document;
-    const platform = getPlatform(loc);
-
-    if (platform === "youtube") {
-      const heading = page.querySelector("h1.ytd-watch-metadata yt-formatted-string");
-      const text = heading?.textContent?.trim();
-      return text || page.title.replace(/^\(\d+\)\s*/, "").replace(/\s*-\s*YouTube$/, "").trim();
+  // Title the site gave the browser's media controls (lock screen, media keys).
+  function getMediaSessionTitle() {
+    try {
+      const metadata = navigator.mediaSession?.metadata;
+      if (!metadata?.title) return "";
+      return metadata.artist ? `${metadata.title} · ${metadata.artist}` : metadata.title;
+    } catch {
+      return "";
     }
+  }
 
-    if (platform === "netflix") {
-      const titleEl = page.querySelector('[data-uia="video-title"]');
-      if (!titleEl) return "";
+  // YouTube keeps the previous video's heading on screen for a moment after
+  // switching videos. <ytd-watch-flexy video-id="..."> says which video the
+  // page currently shows, so only trust the heading when it matches.
+  function getYouTubeTitle(page, loc) {
+    const id = getPlatformVideoId(loc);
+    const watchPage = page.querySelector("ytd-watch-flexy");
+    const pageVideoId = watchPage?.getAttribute("video-id");
 
+    if (pageVideoId && pageVideoId !== id) return ""; // still showing the old video
+
+    const heading = page.querySelector("h1.ytd-watch-metadata yt-formatted-string");
+    const text = heading?.textContent?.trim();
+    if (text) return text;
+
+    const fromTab = page.title.replace(/^\(\d+\)\s*/, "").replace(/\s*-\s*YouTube$/, "").trim();
+    return fromTab && fromTab !== "YouTube" ? fromTab : "";
+  }
+
+  // Netflix shows "Show · E3 · Episode name" only while the player controls
+  // are visible, so the content script keeps whatever it found last.
+  function getNetflixTitle(page) {
+    const titleEl = page.querySelector('[data-uia="video-title"]');
+
+    if (titleEl) {
       const parts = Array.from(titleEl.children)
         .map((child) => child.textContent.trim())
         .filter(Boolean);
 
-      return parts.length > 0 ? parts.join(" · ") : titleEl.textContent.trim();
+      const text = parts.length > 0 ? parts.join(" · ") : titleEl.textContent.trim();
+      if (text) return text;
     }
+
+    return getMediaSessionTitle();
+  }
+
+  // Best-effort title; "" means "not known yet – try again later".
+  function getVideoTitle(doc, loc) {
+    const page = doc || document;
+    const platform = getPlatform(loc);
+
+    if (platform === "youtube") return getYouTubeTitle(page, loc) || getMediaSessionTitle();
+    if (platform === "netflix") return getNetflixTitle(page);
 
     return "";
   }

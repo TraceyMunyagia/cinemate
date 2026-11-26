@@ -4,7 +4,7 @@
 //  - Chat: only the last few minutes of dialogue, not the last 5 lines.
 
 const crypto = require("crypto");
-const { entrySeconds, secondsToTime } = require("../utils/formatter");
+const { entrySeconds, secondsToTime, timeToSeconds } = require("../utils/formatter");
 
 const CHAT_WINDOW_SECONDS = 180; // last 3 minutes
 const CHAT_MAX_CHARS = 4000;
@@ -83,4 +83,44 @@ function spoilerSafeMemory(record, currentSeconds, graceSeconds = SUMMARY_GRACE_
   return coveredUntil <= currentSeconds + graceSeconds ? memory : null;
 }
 
-module.exports = { upTo, recentDialogue, formatDialogue, fingerprint, spoilerSafeMemory };
+// "00:12:03" or "12:03" – the AI sometimes writes "unknown" or leaves it out.
+const isTimestamp = (value) => /^\d{1,2}:\d{2}(:\d{2})?$/.test(String(value || "").trim());
+
+// What chat may use from the saved episode memory at the viewer's position:
+//  - "full":    the memory doesn't go past the viewer → use all of it
+//  - "partial": it covers later scenes (viewer rewound) → only events
+//               timestamped before the viewer's position
+//  - null:      nothing safe to use
+function memoryForChat(record, currentSeconds) {
+  const memory = record?.episodeMemory;
+  if (!memory?.summary) return null;
+
+  const safe = spoilerSafeMemory(record, currentSeconds);
+  if (safe) {
+    return { scope: "full", coveredUntil: memory.coverage?.endTime || null, memory: safe };
+  }
+
+  if (!hasNumber(currentSeconds)) return null;
+
+  const earlierEvents = (Array.isArray(memory.importantEvents) ? memory.importantEvents : []).filter(
+    (event) => isTimestamp(event?.time) && timeToSeconds(event.time) <= currentSeconds
+  );
+
+  if (earlierEvents.length === 0) return null;
+
+  return {
+    scope: "partial",
+    coveredUntil: secondsToTime(currentSeconds),
+    memory: { importantEvents: earlierEvents },
+  };
+}
+
+module.exports = {
+  upTo,
+  recentDialogue,
+  formatDialogue,
+  fingerprint,
+  spoilerSafeMemory,
+  memoryForChat,
+  isTimestamp,
+};

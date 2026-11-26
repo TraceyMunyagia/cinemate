@@ -28,11 +28,13 @@ async function readJson(filePath) {
 }
 
 // `fingerprint` identifies the exact subtitles the memory was built from.
-async function saveEpisodeMemory(episodeId, episodeMemory, { fingerprint = null } = {}) {
+// `fingerprint` identifies the exact subtitles the memory was built from.
+async function saveEpisodeMemory(episodeId, episodeMemory, { fingerprint = null, title = "" } = {}) {
   await fs.promises.mkdir(DATA_DIR, { recursive: true });
 
   const record = {
     episodeId: String(episodeId),
+    title: String(title || ""),
     savedAt: new Date().toISOString(),
     fingerprint,
     episodeMemory,
@@ -65,11 +67,37 @@ async function listEpisodeMemories() {
     .filter(Boolean)
     .map((record) => ({
       episodeId: record.episodeId,
+      title: record.title || "",
       savedAt: record.savedAt,
       summary: record.episodeMemory?.summary || "",
       coveredUntil: record.episodeMemory?.coverage?.endTime || null,
+      coveredUntilSeconds: record.episodeMemory?.coverage?.endSeconds ?? null,
     }))
     .sort((a, b) => (a.savedAt < b.savedAt ? 1 : -1));
 }
 
-module.exports = { saveEpisodeMemory, getEpisodeMemory, listEpisodeMemories, fileNameFor };
+// Removes the saved memory (new and pre-Week-2 file names). True if anything was deleted.
+async function deleteEpisodeMemory(episodeId) {
+  const candidates = [fileNameFor(episodeId), `${slugify(episodeId)}.json`];
+  let deleted = false;
+
+  for (const file of candidates) {
+    try {
+      await fs.promises.unlink(path.join(DATA_DIR, file));
+      deleted = true;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+
+  if (deleted) logger.info(`Deleted episode memory for "${episodeId}"`);
+  return deleted;
+}
+
+module.exports = {
+  saveEpisodeMemory,
+  getEpisodeMemory,
+  listEpisodeMemories,
+  deleteEpisodeMemory,
+  fileNameFor,
+};
