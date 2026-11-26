@@ -6,6 +6,11 @@ const SPOILER_RULES =
   "If they ask what happens next, make a fun guess and say clearly that it's a guess. " +
   "Only discuss later events if the viewer explicitly asks for spoilers, and warn them first.";
 
+// Used when the viewer turns the spoiler guard off in the settings page.
+const SPOILERS_ALLOWED =
+  "Spoilers are allowed: the viewer turned the spoiler guard off. You may discuss later scenes and anything " +
+  "you know about the show or film, but say \"Spoiler:\" before revealing something past their current position.";
+
 const MEMORY_MAX_CHARS = 2500;
 const LIMITS = { characters: 8, conflicts: 5, events: 10, actions: 5, themes: 6 };
 
@@ -82,9 +87,10 @@ function formatEpisodeMemory(episodeMemory) {
   return text.length > MEMORY_MAX_CHARS ? `${text.slice(0, MEMORY_MAX_CHARS - 1)}…` : text;
 }
 
-// options: { personality, history, dialogue, currentTime, videoTitle, episodeMemory }
+// options: { personality, history, dialogue, currentTime, videoTitle, episodeMemory, allowSpoilers }
 function buildDiscussionPrompt(message, options = {}) {
   const { persona } = getPersona(options.personality);
+  const spoilerRule = options.allowSpoilers ? SPOILERS_ALLOWED : SPOILER_RULES;
 
   const watching = options.videoTitle ? `The viewer is watching: ${options.videoTitle}\n` : "";
   const position = options.currentTime
@@ -98,7 +104,7 @@ function buildDiscussionPrompt(message, options = {}) {
   return `
 ${persona}
 ${EMOTIONAL_TONE_GUIDANCE}
-${SPOILER_RULES}
+${spoilerRule}
 
 ${watching}${position}
 ${memory ? `${memory}\n` : ""}
@@ -114,7 +120,8 @@ Respond naturally and stay consistent with the conversation so far.
 
 function buildDiscussionSystemPrompt(options = {}) {
   const { persona } = getPersona(options.personality);
-  return `${persona} ${EMOTIONAL_TONE_GUIDANCE} ${SPOILER_RULES} Keep replies natural, concise, and grounded in the available subtitles, episode memory and prior conversation.`;
+  const spoilerRule = options.allowSpoilers ? SPOILERS_ALLOWED : SPOILER_RULES;
+  return `${persona} ${EMOTIONAL_TONE_GUIDANCE} ${spoilerRule} Keep replies natural, concise, and grounded in the available subtitles, episode memory and prior conversation.`;
 }
 
 module.exports = {
@@ -122,4 +129,5 @@ module.exports = {
   buildDiscussionSystemPrompt,
   formatEpisodeMemory,
   SPOILER_RULES,
+  SPOILERS_ALLOWED,
 };

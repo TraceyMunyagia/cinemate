@@ -66,6 +66,14 @@ globalThis.chrome = {
   ]);
   assert.strictEqual(await context.controlMedia({}, "hold", "pause"), null, "no tab");
 
+  // checkTab for the status banner
+  chrome.tabs.sendMessage = async () => ({ videoId: "youtube-abc", seconds: 50, captions: "missing" });
+  assert.deepStrictEqual(await context.checkTab({ videoId: "youtube-abc", tabId: 7 }), { tab: "ok", captions: "missing" });
+  assert.deepStrictEqual(await context.checkTab(null), { tab: "none", captions: null });
+  chrome.tabs.sendMessage = async () => {
+    throw new Error("Receiving end does not exist");
+  };
+  assert.deepStrictEqual(await context.checkTab({ videoId: "youtube-abc", tabId: 7 }), { tab: "unreachable", captions: null });
   console.log("✅ Chat context and spoiler guard work");
 })().catch((error) => {
   console.error(error);

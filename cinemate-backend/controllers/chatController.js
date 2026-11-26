@@ -11,26 +11,39 @@ const {
   optionalHistory,
   optionalNumber,
   optionalString,
+  optionalBoolean,
 } = require("../utils/validators");
 
-// POST /chat { message, subtitles?, personality?, history?, episodeId?, videoTitle?, currentSeconds? }
+// POST /chat { message, subtitles?, personality?, history?, episodeId?, videoTitle?,
+//              currentSeconds?, allowSpoilers? }
 async function chat(req, res, next) {
   try {
-    const { subtitles, message, personality, history, episodeId, videoTitle, currentSeconds } = req.body;
+    const {
+      subtitles,
+      message,
+      personality,
+      history,
+      episodeId,
+      videoTitle,
+      currentSeconds,
+      allowSpoilers,
+    } = req.body;
     requireMessage(message);
     optionalSubtitles(subtitles);
     optionalHistory(history);
     optionalString(episodeId, "episodeId", 200);
     optionalString(videoTitle, "videoTitle", 300);
     optionalNumber(currentSeconds, "currentSeconds");
+    optionalBoolean(allowSpoilers, "allowSpoilers");
 
     // Last few minutes before the viewer's position – nothing after it.
     const recent = contextService.recentDialogue(subtitles || [], currentSeconds);
 
     // The saved episode memory (summary, characters, conflicts, events) –
-    // only the parts that don't go past the viewer's position.
+    // only the parts that don't go past the viewer's position, unless the
+    // viewer turned the spoiler guard off.
     const saved = episodeId ? await memoryService.getEpisodeMemory(episodeId) : null;
-    const episodeMemory = contextService.memoryForChat(saved, currentSeconds);
+    const episodeMemory = contextService.memoryForChat(saved, allowSpoilers ? null : currentSeconds);
     const memoryScope = episodeMemory?.scope || "none";
 
     const currentTime = Number.isFinite(currentSeconds) ? secondsToTime(currentSeconds) : null;
@@ -41,7 +54,8 @@ async function chat(req, res, next) {
         mock: true,
         reply:
           `Mock reply (${getPersona(personality).label}) at ${currentTime || "unknown time"}, ` +
-          `using ${recent.length} lines of dialogue + memory: ${memoryScope}, to: "${message}"`,
+          `using ${recent.length} lines of dialogue + memory: ${memoryScope}` +
+          `${allowSpoilers ? " (spoilers on)" : ""}, to: "${message}"`,
         context: { lines: recent.length, memory: memoryScope },
       });
     }
@@ -53,9 +67,13 @@ async function chat(req, res, next) {
       currentTime,
       videoTitle,
       episodeMemory,
+      allowSpoilers,
     });
 
-    const reply = await aiService.generateReply(prompt, buildDiscussionSystemPrompt({ personality }));
+    const reply = await aiService.generateReply(
+      prompt,
+      buildDiscussionSystemPrompt({ personality, allowSpoilers })
+    );
 
     res.json({
       success: true,

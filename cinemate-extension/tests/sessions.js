@@ -4,6 +4,9 @@
 
 const assert = require("assert");
 
+require("../platforms/registry.js");
+require("../platforms/youtube.js");
+require("../platforms/netflix.js");
 require("../utils/sessions.js");
 const { sessions } = globalThis.CineMate;
 

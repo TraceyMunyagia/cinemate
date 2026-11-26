@@ -9,6 +9,9 @@ Object.defineProperty(globalThis, "navigator", {
   value: { mediaSession: { metadata: null } },
   configurable: true,
 });
+require("../platforms/registry.js");
+require("../platforms/youtube.js");
+require("../platforms/netflix.js");
 require("../utils/videoInfo.js");
 const { video } = globalThis.CineMate;
 

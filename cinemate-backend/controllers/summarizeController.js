@@ -9,18 +9,20 @@ const {
   optionalBoolean,
 } = require("../utils/validators");
 
-// POST /summarize  { subtitles, episodeId?, videoTitle?, currentSeconds?, force? }
+// POST /summarize  { subtitles, episodeId?, videoTitle?, currentSeconds?, force?, allowSpoilers? }
 async function summarize(req, res, next) {
   try {
-    const { subtitles, episodeId, videoTitle, currentSeconds, force } = req.body;
+    const { subtitles, episodeId, videoTitle, currentSeconds, force, allowSpoilers } = req.body;
     requireSubtitles(subtitles);
     optionalString(episodeId, "episodeId", 200);
     optionalString(videoTitle, "videoTitle", 300);
     optionalNumber(currentSeconds, "currentSeconds");
     optionalBoolean(force, "force");
+    optionalBoolean(allowSpoilers, "allowSpoilers");
 
-    // Spoiler guard: never summarise past where the viewer is.
-    const visible = contextService.upTo(subtitles, currentSeconds);
+    // Spoiler guard: never summarise past where the viewer is,
+    // unless the viewer turned it off.
+    const visible = allowSpoilers ? subtitles : contextService.upTo(subtitles, currentSeconds);
     if (visible.length === 0) {
       throw new HttpError(400, "No captions before the current playback point yet.");
     }

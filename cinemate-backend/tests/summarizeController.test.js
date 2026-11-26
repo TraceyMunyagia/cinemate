@@ -70,6 +70,10 @@ test("new captions or force=true rebuild the summary", async () => {
   const forced = await call({ subtitles, episodeId: "netflix-9", currentSeconds: 1900, force: true });
   assert.strictEqual(forced.body.cached, false);
 });
+test("with the spoiler guard off, everything captured is summarised", async () => {
+  const { body } = await call({ subtitles, episodeId: "netflix-10", currentSeconds: 150, allowSpoilers: true });
+  assert.strictEqual(body.summary, "Summary of 3 lines");
+});
 
 test("nothing before the viewer's position is a clear 400", async () => {
   const { status, body } = await call({ subtitles, currentSeconds: 10 });

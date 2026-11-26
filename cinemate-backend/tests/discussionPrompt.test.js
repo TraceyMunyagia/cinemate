@@ -69,6 +69,14 @@ test("tells the AI when there are no subtitles", () => {
   assert.match(buildDiscussionPrompt("Hi"), /No subtitles have been captured yet/);
 });
 
+test("with the spoiler guard off, the prompt allows spoilers (with a warning)", () => {
+  const prompt = buildDiscussionPrompt("What happens next?", { allowSpoilers: true });
+  assert.match(prompt, /Spoilers are allowed/);
+  assert.match(prompt, /say "Spoiler:"/);
+  assert.doesNotMatch(prompt, /Never reveal/);
+  assert.match(buildDiscussionSystemPrompt({ allowSpoilers: true }), /Spoilers are allowed/);
+});
+
 test("the system prompt carries the spoiler rule too", () => {
   assert.match(buildDiscussionSystemPrompt({ personality: "filmCritic" }), /Spoiler rule/);
 });

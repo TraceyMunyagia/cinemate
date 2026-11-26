@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>CineMate settings</title>
+<link rel="stylesheet" href="styles/options.css" />
+</head>
+
+<body>
+<main class="page">
+  <header class="page-header">
+    <div class="logo">🎬</div>
+    <div>
+      <h1>CineMate settings</h1>
+      <p class="muted">Changes save as you make them. <span id="version"></span></p>
+    </div>
+    <span id="savedNote" class="saved-note" hidden>Saved ✓</span>
+  </header>
+
+  <!-- ---------- Server ---------- -->
+  <section class="card">
+    <h2>Server</h2>
+    <label for="backendUrl">CineMate server address</label>
+    <div class="row">
+      <input id="backendUrl" type="text" placeholder="http://localhost:3000" autocomplete="off" />
+      <button id="saveUrlBtn" class="btn">Save</button>
+      <button id="testBtn" class="btn secondary">Test connection</button>
+    </div>
+    <p id="urlError" class="error" hidden></p>
+    <p class="hint">Where <code>cinemate-backend</code> is running. Leave it as <code>http://localhost:3000</code> unless you've deployed it somewhere else.</p>
+    <div id="testResult" class="test-result" hidden></div>
+  </section>
+
+  <!-- ---------- Chat ---------- -->
+  <section class="card">
+    <h2>Chat</h2>
+
+    <label for="personality">Persona</label>
+    <select id="personality"></select>
+    <p class="hint">How CineMate talks to you. You can also switch in the panel.</p>
+
+    <label class="check">
+      <input id="spoilerGuard" type="checkbox" />
+      <span>Spoiler guard</span>
+    </label>
+    <p class="hint">On: CineMate only knows what happens up to where you are in the video. Off: it may talk about later scenes (and warns you first).</p>
+  </section>
+
+  <!-- ---------- Voice ---------- -->
+  <section class="card">
+    <h2>Voice</h2>
+
+    <label for="voiceInput">Listening (your voice → text)</label>
+    <select id="voiceInput">
+      <option value="browser">Chrome speech recognition (needs internet, uses Google)</option>
+      <option value="server">CineMate server – local Whisper (stays on your computer)</option>
+    </select>
+
+    <label for="voiceOutput">CineMate's voice</label>
+    <select id="voiceOutput">
+      <option value="browser">Chrome's voice</option>
+      <option value="server">CineMate server voice (pyttsx3)</option>
+      <option value="off">Off – text replies only</option>
+    </select>
+
+    <label for="language">Language</label>
+    <input id="language" type="text" list="languageList" placeholder="Chrome's language" autocomplete="off" />
+    <datalist id="languageList">
+      <option value="en-KE">English (Kenya)</option>
+      <option value="en-US">English (US)</option>
+      <option value="en-GB">English (UK)</option>
+      <option value="sw-KE">Swahili (Kenya)</option>
+      <option value="fr-FR">French</option>
+      <option value="es-ES">Spanish</option>
+      <option value="pt-BR">Portuguese (Brazil)</option>
+      <option value="de-DE">German</option>
+      <option value="hi-IN">Hindi</option>
+    </datalist>
+    <p id="languageError" class="error" hidden></p>
+    <p class="hint">Leave empty to use Chrome's language (<span id="browserLanguage"></span>). Format: <code>en-KE</code>.</p>
+
+    <label for="whileTalking">While you talk and CineMate replies, the video…</label>
+    <select id="whileTalking">
+      <option value="pause">pauses, then resumes</option>
+      <option value="duck">keeps playing quietly</option>
+      <option value="off">does nothing</option>
+    </select>
+
+    <label class="check">
+      <input id="autoSend" type="checkbox" />
+      <span>Send as soon as I stop talking</span>
+    </label>
+    <p class="hint">Off: what you said goes into the text box so you can edit it before sending.</p>
+  </section>
+</main>
+
+<script src="utils/storage.js"></script>
+<script src="utils/api.js"></script>
+<script src="options.js"></script>
+</body>
+</html>

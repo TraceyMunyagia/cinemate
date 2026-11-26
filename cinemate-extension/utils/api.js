@@ -5,7 +5,12 @@
 (function (root) {
   const CineMate = (root.CineMate = root.CineMate || {});
 
-  const API_BASE = "http://localhost:3000";
+  // Set from the settings page (cinemateSettings.backendUrl) via setBase().
+  let apiBase = "http://localhost:3000";
+
+  function setBase(url) {
+    if (url) apiBase = String(url).replace(/\/+$/, "");
+  }
 
   class ApiError extends Error {
     constructor(message, status, data = {}) {
@@ -22,7 +27,7 @@
     let response;
 
     try {
-      response = await fetch(`${API_BASE}${path}`, {
+      response = await fetch(`${apiBase}${path}`, {
         method,
         headers: body ? { "Content-Type": "application/json" } : undefined,
         body: body ? JSON.stringify(body) : undefined,
@@ -30,7 +35,7 @@
       });
     } catch (error) {
       if (error?.name === "AbortError") throw error; // stopped on purpose
-      throw new ApiError("Can't reach the CineMate server – is it running on localhost:3000?", 0);
+      throw new ApiError(`Can't reach the CineMate server at ${apiBase} – is it running?`, 0);
     }
 
     const data = await response.json().catch(() => ({}));
@@ -55,12 +60,17 @@
   }
 
   CineMate.api = {
-    API_BASE,
+    get API_BASE() {
+      return apiBase;
+    },
+    setBase,
     ApiError,
-    post: (path, body, options) => request("POST", path, body, options),    
+    post: (path, body, options) => request("POST", path, body, options),
     get: (path) => request("GET", path),
     getMemory,
     listMemories: async () => (await request("GET", "/memory")).episodes || [],
     deleteMemory: (episodeId) => request("DELETE", memoryPath(episodeId)),
+    health: () => request("GET", "/health"),
+    voiceStatus: () => request("GET", "/voice/status?refresh=1"),
   };
 })(globalThis);

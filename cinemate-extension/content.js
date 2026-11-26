@@ -4,14 +4,11 @@
 // Depends on utils/*.js, which the manifest loads first.
 
 (function () {
-  const { time, captions, storage, video: videoInfo, media } = globalThis.CineMate;
+  const { captions, storage, video: videoInfo, media } = globalThis.CineMate;
   const CAPTURE_INTERVAL_MS = 1000;
   const SAVE_DELAY_MS = 2000;
+  const NO_CAPTIONS_AFTER_SECONDS = 45; // played this long with no captions → tell the panel
 
-  const CAPTION_SELECTORS = {
-    youtube: ".ytp-caption-segment",
-    netflix: ".player-timedtext-text-container",
-  };
 
   let session = null; // { videoId, platform, title, url } for the video on screen
   let tracker = null; // caption tracker for that video
@@ -22,22 +19,32 @@
   let intervalId = null;
   let stopped = false; // set once the extension is reloaded under this tab
   let tabId = null; // this tab's id, so the panel can ask for the playback time
+  let playedSeconds = 0; // how long this video has played in this tab
+  let sawCaptions = false; // any caption text seen for this video in this tab
 
   // Pauses / turns down the video while you talk to CineMate.
-  const mediaController = media.createMediaController({ getVideo: () => time.getVideoElement() });
   console.log("🎬 CineMate content script running");
 
   // ---------- Captions ----------
 
+   // Each platform adapter knows where its captions are.
   function readCaptionText() {
-    if (!session) return "";
-    const selector = CAPTION_SELECTORS[session.platform];
-    if (!selector) return "";
+    return session ? videoInfo.readCaptions() : "";
+  }
 
-    return Array.from(document.querySelectorAll(selector))
-      .map((el) => el.textContent.trim())
-      .filter(Boolean)
-      .join(" ");
+    function getPlaybackSeconds() {
+    return videoInfo.getVideoElement()?.currentTime || 0;
+  }
+
+  function isPlaying() {
+    const video = videoInfo.getVideoElement();
+    return Boolean(video && !video.paused);
+  }
+
+  // "ok" once captions have appeared; "missing" after 45s of playing without any.
+  function captionStatus() {
+    if (sawCaptions) return "ok";
+    return playedSeconds >= NO_CAPTIONS_AFTER_SECONDS ? "missing" : "waiting";
   }
 
   // ---------- Saving ----------
@@ -116,6 +123,8 @@
       title: current.title || saved?.title || "",
       tabId: await getTabId(),
     };
+     playedSeconds = 0;
+    sawCaptions = false;
     tracker = captions.createTracker(entries);
 
     await storage.setActiveVideo(session);
@@ -157,7 +166,11 @@
     }
     if (!session || !tracker) return;
 
-    const changed = tracker.push(readCaptionText(), time.getPlaybackSeconds());
+        const text = readCaptionText();
+    if (text) sawCaptions = true;
+    if (isPlaying()) playedSeconds += CAPTURE_INTERVAL_MS / 1000;
+
+    const changed = tracker.push(text, getPlaybackSeconds());
     if (changed) scheduleSave();
   }
 
@@ -247,12 +260,14 @@
       return;
     }
     // The panel asking where the viewer is (spoiler guard).
-    if (message.action === "getPlayback") {
-      const video = time.getVideoElement();
-      sendResponse({
+       if (message.action === "getPlayback") {
+      const video = videoInfo.getVideoElement();
+           sendResponse({
         videoId: session?.videoId || null,
+        platform: session?.platform || null,
         seconds: video ? video.currentTime : null,
         paused: video ? video.paused : true,
+        captions: captionStatus(),
       });
     }
   });

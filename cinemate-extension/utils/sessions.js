@@ -6,7 +6,9 @@
   const CineMate = (root.CineMate = root.CineMate || {});
 
   const SPOILER_GRACE_SECONDS = 30;
-  const PLATFORM_ICONS = { youtube: "▶️", netflix: "🅽" };
+
+  // Icons come from the platform adapters (platforms/*.js).
+  const platformIcon = (id) => CineMate.platforms?.byId(id)?.icon || "🎬";
 
   const hasNumber = (value) => typeof value === "number" && Number.isFinite(value);
 
@@ -41,7 +43,7 @@
         return {
           ...session,
           title: session.title || memory?.title || "Untitled video",
-          icon: PLATFORM_ICONS[session.platform] || "🎬",
+          icon: platformIcon(session.platform),
           isActive: session.videoId === activeVideoId,
           memory: memory
             ? { coveredUntil: memory.coveredUntil, summary: memory.summary || "" }

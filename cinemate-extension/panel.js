@@ -1,4 +1,4 @@
-// popup.js
+// panel.js
 // The CineMate discussion panel: chat, voice, summary and sessions.
 // Each video has its own chat and saved memory, and the panel follows
 // whichever video is active (the tab you clicked 🎬 in or switched to last).
@@ -35,11 +35,15 @@ const textForm = document.getElementById("textForm");
 const textInput = document.getElementById("textInput");
 const sendBtn = document.getElementById("sendBtn");
 const stopBtn = document.getElementById("stopBtn");
+const settingsBtn = document.getElementById("settingsBtn");
+const banner = document.getElementById("banner");
+const bannerText = document.getElementById("bannerText");
+const bannerAction = document.getElementById("bannerAction");
 
-const { storage, context, api, sessions, time, speech, listen } = globalThis.CineMate;
+const { storage, context, api, sessions, time, speech, listen, status: statusBanner } = globalThis.CineMate;
 
-const PERSONALITY_KEY = "cinematePersonality";
-const DEFAULT_PERSONALITY = "casualFriend";
+const STATUS_CHECK_MS = 10000; // how often to check the video tab (captions, reachable)
+const HEALTH_CHECK_MS = 30000; // how often to check the server
 const WELCOME_MESSAGE = "Ask me about the scene, character choices, conflicts, or what just happened.";
 const SESSIONS_REFRESH_MS = 10000; // re-draw the Sessions tab at most this often
 const MEMORY_LIST_CACHE_MS = 30000; // how long to reuse GET /memory
@@ -55,7 +59,14 @@ let currentTurn = null; // { abort, voice } while CineMate is thinking or speaki
 let heldVideo = null; // the video we paused / turned down, so we restore the right one
 let isBusy = false;
 
-let currentPersonality = DEFAULT_PERSONALITY;
+let generalSettings = { ...storage.DEFAULT_SETTINGS }; // backend URL, spoiler guard
+let serverState = "unknown"; // "ok" | "offline" | "unknown"
+let lastHealth = null; // last /health reply
+let lastHealthAt = 0;
+let statusTimer = null;
+let bannerActionType = null; // "retry" | "refresh" | null
+
+let currentPersonality = storage.DEFAULT_PERSONALITY;
 let activeVideo = null; // the video the panel follows
 let chatVideoId; // whose chat + summary are on screen (undefined = nothing loaded yet)
 let conversationHistory = []; // the chat on screen
@@ -74,7 +85,10 @@ let memoryListCache = { at: 0, list: [], failed: false };
 
 restorePersonality();
 loadVoiceSettings();
-refreshVideoInfo();
+loadGeneralSettings().then(() => {
+  refreshVideoInfo(); // needs the server address for the saved summary
+  startStatusChecks();
+});
 storage.watch(handleStorageChange);
 
 textForm.addEventListener("submit", (event) => {
@@ -87,6 +101,8 @@ textForm.addEventListener("submit", (event) => {
 
 talkBtn.addEventListener("click", toggleListening);
 stopBtn.addEventListener("click", stopEverything);
+settingsBtn.addEventListener("click", () => chrome.runtime.openOptionsPage());
+bannerAction.addEventListener("click", handleBannerAction);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") stopEverything();
@@ -116,20 +132,19 @@ personaButtons.forEach((button) => {
 
 // ---------- Personality ----------
 
-function setPersonality(personality) {
+// The settings page edits the same value, so a change there shows up here.
+function setPersonality(personality, { save = true } = {}) {
   currentPersonality = personality;
 
   personaButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.personality === personality);
   });
 
-  chrome.storage.local.set({ [PERSONALITY_KEY]: personality });
+  if (save) storage.savePersonality(personality);
 }
 
-function restorePersonality() {
-  chrome.storage.local.get([PERSONALITY_KEY], (result) => {
-    setPersonality(result[PERSONALITY_KEY] || DEFAULT_PERSONALITY);
-  });
+async function restorePersonality() {
+  setPersonality(await storage.getPersonality(), { save: false });
 }
 
 // ---------- Active video ----------
@@ -155,6 +170,7 @@ async function refreshVideoInfo() {
   // Switched to a different video → show its chat and summary.
   if (videoId !== chatVideoId) {
     await loadEpisode(videoId);
+    checkStatus();
   }
 
   if (currentView === "sessions") renderSessions();
@@ -164,6 +180,14 @@ function handleStorageChange(changes) {
   if (changes[storage.KEYS.VOICE]) {
     voiceSettings = { ...storage.DEFAULT_VOICE_SETTINGS, ...(changes[storage.KEYS.VOICE].newValue || {}) };
     updateHint();
+  }
+
+  if (changes[storage.KEYS.SETTINGS]) {
+    applyGeneralSettings(changes[storage.KEYS.SETTINGS].newValue);
+  }
+
+  if (changes[storage.KEYS.PERSONALITY]?.newValue) {
+    setPersonality(changes[storage.KEYS.PERSONALITY].newValue, { save: false });
   }
 
   const activeChanged = Boolean(changes[storage.KEYS.ACTIVE]);
@@ -212,7 +236,7 @@ async function loadSavedMemory(videoId, token) {
   try {
     record = await api.getMemory(videoId);
   } catch (err) {
-    console.warn("Could not load saved memory:", err.message);
+    console.info("Saved memory unavailable:", err.message);
     return; // server offline – the panel still works without it
   }
 
@@ -221,7 +245,7 @@ async function loadSavedMemory(videoId, token) {
   const { currentSeconds } = await getViewingContext(activeVideo);
   if (token !== loadToken) return;
 
-  if (sessions.isMemoryAhead(record.episodeMemory, currentSeconds)) {
+  if (generalSettings.spoilerGuard && sessions.isMemoryAhead(record.episodeMemory, currentSeconds)) {
     showSpoilerGate(record.episodeMemory, currentSeconds);
   } else {
     renderSummary(record.episodeMemory, { savedAt: record.savedAt });
@@ -321,6 +345,7 @@ async function askCineMate(message, { video, history, signal }) {
       episodeId: video?.videoId,
       videoTitle: video?.title,
       currentSeconds,
+      allowSpoilers: !generalSettings.spoilerGuard,
     },
     { signal }
   );
@@ -399,7 +424,8 @@ async function generateSummary(event) {
     statusDiv.innerText = "Generating summary...";
 
     const { subtitles, currentSeconds } = await getViewingContext(video);
-    const visible = context.upTo(subtitles, currentSeconds);
+    // Spoiler guard on: only what you've reached. Off: everything captured.
+    const visible = generalSettings.spoilerGuard ? context.upTo(subtitles, currentSeconds) : subtitles;
 
     if (visible.length === 0) {
       statusDiv.innerText = "No captions yet – turn on CC and play the video.";
@@ -412,6 +438,7 @@ async function generateSummary(event) {
       videoTitle: video?.title,
       currentSeconds,
       force: Boolean(event?.shiftKey),
+      allowSpoilers: !generalSettings.spoilerGuard,
     });
 
     memoryListCache.at = 0; // the Sessions tab should show the new summary
@@ -713,6 +740,9 @@ function showError(err, fallbackMessage) {
   }
 
   statusDiv.innerText = isApiError ? err.message : fallbackMessage;
+
+  // Couldn't reach the server at all → show the offline banner straight away.
+  if (isApiError && err.status === 0) checkStatus({ forceHealth: true });
 }
 
 // Rate limited: count down and keep the AI buttons off until it's over.
@@ -864,6 +894,87 @@ function releaseMedia() {
   const video = heldVideo;
   heldVideo = null;
   context.controlMedia(video, "release");
+}
+
+// ---------- Settings (Week 5) ----------
+
+async function loadGeneralSettings() {
+  applyGeneralSettings(await storage.getSettings());
+}
+
+function applyGeneralSettings(settings) {
+  const previousUrl = generalSettings.backendUrl;
+  generalSettings = { ...storage.DEFAULT_SETTINGS, ...(settings || {}) };
+  api.setBase(generalSettings.backendUrl);
+
+  // New server address → check it straight away.
+  if (generalSettings.backendUrl !== previousUrl) {
+    checkStatus({ forceHealth: true });
+  }
+}
+
+// ---------- Status banner (Week 5) ----------
+
+function startStatusChecks() {
+  checkStatus({ forceHealth: true });
+  clearInterval(statusTimer);
+  statusTimer = setInterval(() => {
+    if (document.visibilityState === "visible") checkStatus();
+  }, STATUS_CHECK_MS);
+}
+
+// Server offline? Video tab unreachable? No captions? → one banner.
+async function checkStatus({ forceHealth = false } = {}) {
+  if (forceHealth || Date.now() - lastHealthAt > HEALTH_CHECK_MS) {
+    lastHealthAt = Date.now();
+    try {
+      lastHealth = await api.health();
+      serverState = "ok";
+    } catch {
+      lastHealth = null;
+      serverState = "offline";
+    }
+  }
+
+  const { tab, captions } = await context.checkTab(activeVideo);
+  const platformLabel = globalThis.CineMate.platforms?.byId(activeVideo?.platform)?.label;
+
+  renderBanner(
+    statusBanner.describeProblem({
+      server: serverState,
+      health: lastHealth,
+      backendUrl: generalSettings.backendUrl,
+      tab,
+      captions,
+      platformLabel,
+    })
+  );
+}
+
+function renderBanner(problem) {
+  banner.hidden = !problem;
+  bannerActionType = problem?.action || null;
+  if (!problem) return;
+
+  banner.className = `banner ${problem.level}`;
+  bannerText.innerText = problem.text;
+  bannerAction.hidden = !problem.action;
+  bannerAction.innerText = problem.action === "refresh" ? "Refresh tab" : "Retry";
+}
+
+async function handleBannerAction() {
+  if (bannerActionType === "refresh" && activeVideo?.tabId) {
+    try {
+      await chrome.tabs.reload(activeVideo.tabId);
+      statusDiv.innerText = "Refreshing the video tab…";
+    } catch {
+      statusDiv.innerText = "That tab is closed – open the video again.";
+    }
+    setTimeout(() => checkStatus(), 3000);
+    return;
+  }
+
+  checkStatus({ forceHealth: true });
 }
 
 function escapeHtml(text) {

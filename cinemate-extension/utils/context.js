@@ -54,6 +54,22 @@
       return null; // tab closed or reloaded – nothing to restore
     }
   }
+  // For the panel's status banner: can it reach the video's tab, and has
+  // that tab seen any captions? -> { tab: "ok" | "unreachable" | "none", captions }
+  async function checkTab(activeVideo) {
+    if (!activeVideo) return { tab: "none", captions: null };
+    if (!activeVideo.tabId) return { tab: "unreachable", captions: null };
 
-  CineMate.context = { upTo, forChat, getPlayback, controlMedia };
+    try {
+      const reply = await chrome.tabs.sendMessage(activeVideo.tabId, { action: "getPlayback" });
+      if (!reply) return { tab: "unreachable", captions: null };
+      // The tab has moved on to another video – that one becomes active by itself.
+      if (reply.videoId !== activeVideo.videoId) return { tab: "ok", captions: null };
+      return { tab: "ok", captions: reply.captions || null };
+    } catch {
+      return { tab: "unreachable", captions: null };
+    }
+  }
+
+  CineMate.context = { upTo, forChat, getPlayback, controlMedia, checkTab };
 })(globalThis);

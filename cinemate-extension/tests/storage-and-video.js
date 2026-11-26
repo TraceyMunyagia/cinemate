@@ -49,6 +49,9 @@ globalThis.chrome = {
 };
 
 require("../utils/storage.js");
+require("../platforms/registry.js");
+require("../platforms/youtube.js");
+require("../platforms/netflix.js");
 require("../utils/videoInfo.js");
 const { storage, video } = globalThis.CineMate;
 
@@ -143,6 +146,32 @@ const at = (href) => new URL(href);
   assert.strictEqual(voice.output, "off");
   assert.strictEqual(voice.language, "en-KE");
   assert.strictEqual(voice.input, "browser", "untouched settings keep their defaults");
+
+    // ---- General settings + persona (Week 5) ----
+  assert.deepStrictEqual(await storage.getSettings(), storage.DEFAULT_SETTINGS, "defaults");
+  assert.strictEqual(storage.normalizeBackendUrl("localhost:3000/"), "http://localhost:3000");
+  assert.strictEqual(storage.normalizeBackendUrl(" https://cinemate.example.com/api/ "), "https://cinemate.example.com/api");
+  assert.strictEqual(storage.normalizeBackendUrl("ftp://nope"), null);
+  assert.strictEqual(storage.normalizeBackendUrl(""), null);
+
+  const savedSettings = await storage.saveSettings({ backendUrl: "192.168.1.20:3000", spoilerGuard: false });
+  assert.deepStrictEqual(savedSettings, { backendUrl: "http://192.168.1.20:3000", spoilerGuard: false });
+  await assert.rejects(storage.saveSettings({ backendUrl: "not a url at all" }), /server address/);
+  assert.strictEqual((await storage.getSettings()).backendUrl, "http://192.168.1.20:3000", "bad URL not saved");
+
+  assert.strictEqual(await storage.getPersonality(), "casualFriend", "default persona");
+  await storage.savePersonality("theoryAnalyst");
+  assert.strictEqual(await storage.getPersonality(), "theoryAnalyst");
+  assert.strictEqual(await storage.savePersonality("pirate"), "casualFriend", "unknown persona falls back");
+
+  // Two changes at the same moment both survive.
+  await Promise.all([
+    storage.saveVoiceSettings({ whileTalking: "duck" }),
+    storage.saveVoiceSettings({ autoSend: false }),
+  ]);
+  const both = await storage.getVoiceSettings();
+  assert.strictEqual(both.whileTalking, "duck");
+  assert.strictEqual(both.autoSend, false);
 
   console.log("✅ Storage and video detection work");
 })().catch((error) => {
